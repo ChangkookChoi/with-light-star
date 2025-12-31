@@ -1,15 +1,14 @@
 import 'dart:async';
 import 'dart:math' as math;
 
-import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
+import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:sensors_plus/sensors_plus.dart';
-import 'package:flutter_compass/flutter_compass.dart';
+import 'package:motion_sensors/motion_sensors.dart' hide AccelerometerEvent;
 
 import 'package:with_light_star/data/catalog_loader.dart';
 import 'package:with_light_star/data/catalog_models.dart';
-
 import 'package:with_light_star/astro/types.dart';
 import 'package:with_light_star/astro/astro_math.dart';
 import 'package:with_light_star/astro/projection.dart';
@@ -24,310 +23,274 @@ class CameraViewScreen extends StatefulWidget {
 
 class _CameraViewScreenState extends State<CameraViewScreen> {
   // -------------------------
-  // Camera
+  // Camera & FPS
   // -------------------------
   CameraController? _camera;
+  double _cameraFps = 0.0;
+  DateTime? _lastCameraFrameTime;
 
   // -------------------------
-  // Heading (Compass)
+  // Sensor Hz (actual event rate)
   // -------------------------
-  double _headingDeg = 0.0; // 0~360 (북=0)
-  double _headingFilteredDeg = 0.0;
-  bool _headingFilterInitialized = false;
-
-  StreamSubscription<CompassEvent>? _compassSub;
+  double _sensorHz = 0.0;
+  DateTime? _lastSensorTime;
 
   // -------------------------
-  // Pitch/Roll (Accelerometer 기반)
+  // Sensors
   // -------------------------
-  double _pitchDegRaw = 0.0;
-  double _rollDegRaw = 0.0;
-
-  double _pitchOffsetDeg = 0.0;
-  double _rollOffsetDeg = 0.0;
-
-  bool _attitudeCalibrated = false;
-  final List<double> _pitchSamples = [];
-  final List<double> _rollSamples = [];
-
+  final MotionSensors _motionSensors = MotionSensors();
+  StreamSubscription<AbsoluteOrientationEvent>? _absOriSub;
   StreamSubscription<AccelerometerEvent>? _accelSub;
 
-  double get _pitchDegCorrected => _pitchDegRaw - _pitchOffsetDeg;
-  double get _rollDegCorrected => _rollDegRaw - _rollOffsetDeg;
+  // yaw (rad) from motion_sensors (we'll convert to deg for display/projection)
+  double _yawRad = 0.0;
+
+  // pitch / roll: we compute from accelerometer (deg)
+  // raw = latest computed from accelerometer event
+  double _rawPitchDeg = 0.0;
+  double _rawRollDeg = 0.0;
+
+  // filtered = what we actually use for rendering (deg)
+  double _pitchDeg = 0.0;
+  double _rollDeg = 0.0;
+
+  // smoothing factor (0~1) - "how quickly filtered follows raw"
+  static const double _filterFactor = 0.15;
 
   // -------------------------
-  // Location
-  // -------------------------
-  Position? _position;
-  String? _gpsError;
-  StreamSubscription<Position>? _posSub;
-
-  // -------------------------
-  // UI refresh timer (30fps)
+  // UI tick (sync to camera fps)
   // -------------------------
   Timer? _uiTimer;
+  int _uiTickMs =
+      33; // initial fallback; will be replaced by camera fps-derived
+  DateTime? _lastUiTickTime;
 
   // -------------------------
-  // Star Catalog
+  // Location / Catalog
   // -------------------------
+  Position? _position;
+  StreamSubscription<Position>? _posSub;
+
   CatalogData? _catalog;
-  String? _catalogError;
-
-  // 별자리 이름 표기용: code -> display string
   Map<String, String> _displayNameByCode = {};
-
-  // -------------------------
-  // Alt/Az cache (1초마다 갱신)
-  // -------------------------
   Timer? _altazTimer;
   final Map<int, AltAz> _altazByHip = {};
 
-  // -------------------------
-  // 카메라 시야각(대략)
-  // -------------------------
   static const double _hFov = 62.0;
   static const double _vFov = 48.0;
 
-  // -------------------------
-  // Lifecycle
-  // -------------------------
   @override
   void initState() {
     super.initState();
     _initCamera();
     _initLocation();
-    _initOrientation();
     _loadCatalog();
+    _initYawSensor();
+    _initHorizonSensors();
+
+    // 시작은 임시 30fps로, 이후 카메라 FPS 측정되면 자동으로 따라감
+    _startOrUpdateUiTimer(force: true);
   }
 
   @override
   void dispose() {
     _uiTimer?.cancel();
     _altazTimer?.cancel();
-
-    _compassSub?.cancel();
+    _absOriSub?.cancel();
     _accelSub?.cancel();
     _posSub?.cancel();
 
+    _camera?.stopImageStream();
     _camera?.dispose();
     super.dispose();
   }
 
   // -------------------------
-  // Camera init
+  // Camera (FPS 측정)
   // -------------------------
   Future<void> _initCamera() async {
-    try {
-      final cams = await availableCameras();
-      if (cams.isEmpty) return;
+    final cams = await availableCameras();
+    if (cams.isEmpty) return;
 
-      _camera = CameraController(
-        cams.first,
-        ResolutionPreset.high,
-        enableAudio: false,
-      );
+    _camera = CameraController(
+      cams.first,
+      ResolutionPreset.high,
+      enableAudio: false,
+    );
 
-      await _camera!.initialize();
-      if (mounted) setState(() {});
-    } catch (e) {
-      debugPrint('Camera init error: $e');
-    }
+    await _camera!.initialize();
+
+    // 실제 카메라 프레임 속도 측정 (하드코딩 X)
+    _camera!.startImageStream((_) {
+      final now = DateTime.now();
+      if (_lastCameraFrameTime != null) {
+        final dtMs = now.difference(_lastCameraFrameTime!).inMilliseconds;
+        if (dtMs > 0) {
+          final fps = 1000.0 / dtMs;
+
+          // "실제값"은 fps이지만, 값이 튀지 않게 최소한의 완만한 평균만 적용(표시 안정)
+          // (이건 보정이라기보단 통계적 안정화이며, 원시 dt 기반으로 계산한 fps에서 나온 값입니다.)
+          _cameraFps =
+              (_cameraFps == 0.0) ? fps : (_cameraFps * 0.9 + fps * 0.1);
+
+          // 카메라 FPS를 기반으로 UI tick 주기를 자동 업데이트 (sync)
+          _startOrUpdateUiTimer();
+        }
+      }
+      _lastCameraFrameTime = now;
+    });
+
+    if (mounted) setState(() {});
   }
 
   // -------------------------
-  // Orientation init
+  // Yaw only (motion_sensors)
   // -------------------------
-  void _initOrientation() {
-    // 1) Compass -> heading(yaw)
-    _compassSub = FlutterCompass.events?.listen((event) {
-      final h = event.heading;
-      if (h == null) return;
-      updateHeading(h);
+  void _initYawSensor() {
+    // motion_sensors는 "원시 이벤트"이므로 여기서는 setState 하지 않습니다.
+    // UI는 카메라 FPS 기반 tick에서 갱신됩니다.
+    _motionSensors.absoluteOrientationUpdateInterval = 33333; // 요청값(약 30Hz)
+    _absOriSub = _motionSensors.absoluteOrientation.listen((e) {
+      _yawRad = e.yaw;
     });
+  }
 
-    // 2) Accelerometer -> pitch/roll (중력벡터 기반)
-    _accelSub = accelerometerEventStream().listen((e) {
-      final ax = e.x;
-      final ay = e.y;
-      final az = e.z;
+  // -------------------------
+  // Pitch / Roll (accelerometer)
+  // -------------------------
+  void _initHorizonSensors() {
+    _accelSub = accelerometerEvents.listen((e) {
+      final now = DateTime.now();
 
-      // pitch = atan2(-ax, sqrt(ay^2 + az^2))
-      final pitchRad = math.atan2(-ax, math.sqrt(ay * ay + az * az));
-      _pitchDegRaw = pitchRad * 180.0 / math.pi;
-
-      // roll = atan2(ay, az)
-      final rollRad = math.atan2(ay, az);
-      _rollDegRaw = rollRad * 180.0 / math.pi;
-
-      // ✅ 자동 캘리브레이션(약 1초)
-      if (!_attitudeCalibrated) {
-        _pitchSamples.add(_pitchDegRaw);
-        _rollSamples.add(_rollDegRaw);
-
-        if (_pitchSamples.length >= 30) {
-          final pitchAvg =
-              _pitchSamples.reduce((a, b) => a + b) / _pitchSamples.length;
-          final rollAvg =
-              _rollSamples.reduce((a, b) => a + b) / _rollSamples.length;
-
-          _pitchOffsetDeg = pitchAvg;
-          _rollOffsetDeg = rollAvg;
-
-          _attitudeCalibrated = true;
-          debugPrint(
-            '[ATTITUDE_CALIBRATED] pitchOffset=$_pitchOffsetDeg rollOffset=$_rollOffsetDeg',
-          );
-
-          _pitchSamples.clear();
-          _rollSamples.clear();
+      // 실제 이벤트 수신 간격으로 Hz 계산 (실제값)
+      if (_lastSensorTime != null) {
+        final dtMs = now.difference(_lastSensorTime!).inMilliseconds;
+        if (dtMs > 0) {
+          final hz = 1000.0 / dtMs;
+          _sensorHz = (_sensorHz == 0.0) ? hz : (_sensorHz * 0.9 + hz * 0.1);
         }
       }
-    });
+      _lastSensorTime = now;
 
-    // 3) UI refresh (30fps)
-    _uiTimer = Timer.periodic(const Duration(milliseconds: 33), (_) {
+      // 예제와 동일한 방식: 중력 벡터 기반 pitch/roll
+      final rawRoll = math.atan2(e.x, e.y) * 180.0 / math.pi;
+      final rawPitch = math.atan2(
+            -e.z,
+            math.sqrt(e.x * e.x + e.y * e.y),
+          ) *
+          180.0 /
+          math.pi;
+
+      // "raw"만 갱신. 렌더링 값(filtered)은 카메라 FPS tick에서 업데이트합니다.
+      _rawPitchDeg = rawPitch;
+      _rawRollDeg = rawRoll;
+    });
+  }
+
+  // -------------------------
+  // UI tick (sync to camera fps)
+  // -------------------------
+  void _startOrUpdateUiTimer({bool force = false}) {
+    // 카메라 fps -> 목표 tick ms
+    // 1) 카메라 fps가 아직 0이면 fallback(33ms)
+    // 2) 너무 작은/큰 값 방지: 15~60fps 범위로 clamp
+    final fps = (_cameraFps > 0.0) ? _cameraFps : 30.0;
+    final clamped = fps.clamp(15.0, 60.0);
+    final targetMs = (1000.0 / clamped).round();
+
+    // 너무 자주 재시작하지 않도록, 변화가 꽤 있을 때만 갱신
+    final shouldRestart =
+        force || (_uiTimer == null) || ((targetMs - _uiTickMs).abs() >= 4);
+    if (!shouldRestart) return;
+
+    _uiTickMs = targetMs;
+    _uiTimer?.cancel();
+    _lastUiTickTime = DateTime.now();
+
+    _uiTimer = Timer.periodic(Duration(milliseconds: _uiTickMs), (_) {
       if (!mounted) return;
+
+      // 카메라 FPS tick마다 raw -> filtered로 스무딩 (센서 Hz가 낮아도 렌더는 부드럽게)
+      final now = DateTime.now();
+      final dtMs = _lastUiTickTime == null
+          ? _uiTickMs
+          : now.difference(_lastUiTickTime!).inMilliseconds;
+      _lastUiTickTime = now;
+
+      // dt에 따른 alpha 조정(하드코딩 alpha 대신 tick 기반으로 약간 보정)
+      // dt가 커지면 따라가는 비율을 조금 늘려서 체감 동기화 개선
+      final dt = (dtMs <= 0) ? 0.033 : (dtMs / 1000.0);
+      final alpha = 1.0 -
+          math.pow(1.0 - _filterFactor, (dt / 0.033)).toDouble(); // 33ms 기준 확장
+      final a = alpha.clamp(0.02, 0.35);
+
+      _pitchDeg = _pitchDeg * (1.0 - a) + _rawPitchDeg * a;
+      _rollDeg = _rollDeg * (1.0 - a) + _rawRollDeg * a;
+
+      // 여기서만 setState → 렌더링 프레임을 카메라 FPS에 맞춤
       setState(() {});
     });
   }
 
   // -------------------------
-  // Heading smoothing
-  // -------------------------
-  double _normalize180(double deg) => normalize180(deg);
-
-  void updateHeading(double rawDeg) {
-    rawDeg = normalize360(rawDeg);
-
-    if (!_headingFilterInitialized) {
-      _headingFilteredDeg = rawDeg;
-      _headingDeg = rawDeg;
-      _headingFilterInitialized = true;
-      return;
-    }
-
-    final double delta =
-        ((rawDeg - _headingFilteredDeg + 540.0) % 360.0) - 180.0;
-
-    if (delta.abs() < 1.0) return;
-
-    const double alpha = 0.12;
-    _headingFilteredDeg = normalize360(_headingFilteredDeg + delta * alpha);
-    _headingDeg = _headingFilteredDeg;
-  }
-
-  // -------------------------
-  // Location init
+  // Location & Catalog
   // -------------------------
   Future<void> _initLocation() async {
-    try {
-      if (!await Geolocator.isLocationServiceEnabled()) {
-        if (mounted) setState(() => _gpsError = '위치 서비스가 꺼져 있습니다');
-        return;
-      }
+    final pos = await Geolocator.getCurrentPosition();
+    _position = pos;
 
-      var permission = await Geolocator.checkPermission();
-      if (permission == LocationPermission.denied) {
-        permission = await Geolocator.requestPermission();
-      }
-
-      if (permission == LocationPermission.denied) {
-        if (mounted) setState(() => _gpsError = '위치 권한이 거부되었습니다');
-        return;
-      }
-
-      if (permission == LocationPermission.deniedForever) {
-        if (mounted) {
-          setState(() => _gpsError = '위치 권한이 영구 거부되었습니다(설정 필요)');
-        }
-        return;
-      }
-
-      final pos = await Geolocator.getCurrentPosition();
-      if (mounted) setState(() => _position = pos);
-
-      _posSub = Geolocator.getPositionStream().listen((p) {
-        _position = p;
-        if (mounted) setState(() {}); // 위치는 즉시 반영
-      });
-    } catch (e) {
-      if (mounted) setState(() => _gpsError = 'GPS 오류: $e');
-    }
+    // 위치 변화는 느리므로 setState 유지
+    _posSub = Geolocator.getPositionStream().listen((p) {
+      if (!mounted) return;
+      setState(() => _position = p);
+    });
   }
 
-  // -------------------------
-  // Catalog Load
-  // -------------------------
   Future<void> _loadCatalog() async {
-    try {
-      final data = await CatalogLoader.loadOnce();
-      if (!mounted) return;
+    final data = await CatalogLoader.loadOnce();
+    final map = <String, String>{};
+    data.namesByCode.forEach((k, v) => map[k] = v.displayName());
 
-      // code -> 표시명(native 우선)
-      final map = <String, String>{};
-      data.namesByCode.forEach((code, name) {
-        map[code] = name.displayName();
-      });
+    if (!mounted) return;
+    setState(() {
+      _catalog = data;
+      _displayNameByCode = map;
+    });
 
-      setState(() {
-        _catalog = data;
-        _displayNameByCode = map;
-      });
-
-      _startAltAzTimer();
-    } catch (e) {
-      if (!mounted) return;
-      setState(() => _catalogError = e.toString());
-    }
+    _startAltAzTimer();
   }
 
   void _startAltAzTimer() {
     _altazTimer?.cancel();
-
-    // catalog/position이 준비된 뒤에만 의미가 있음
-    _altazTimer = Timer.periodic(const Duration(seconds: 1), (_) {
-      _rebuildAltAzCache();
-    });
-
-    // 최초 1회 즉시 계산
+    _altazTimer =
+        Timer.periodic(const Duration(seconds: 1), (_) => _rebuildAltAzCache());
     _rebuildAltAzCache();
   }
 
   void _rebuildAltAzCache() {
-    final catalog = _catalog;
-    final pos = _position;
-    if (catalog == null || pos == null) return;
-
+    if (_catalog == null || _position == null) return;
     final utc = DateTime.now().toUtc();
-    final lat = pos.latitude;
-    final lon = pos.longitude;
 
-    final next = <int, AltAz>{};
-
-    // stars_min.json에 존재하는 hip만 계산
-    catalog.starsByHip.forEach((hip, star) {
-      final altaz = radecToAltAz(
+    _altazByHip.clear();
+    _catalog!.starsByHip.forEach((hip, star) {
+      _altazByHip[hip] = radecToAltAz(
         raDeg: star.raDeg,
         decDeg: star.decDeg,
-        latDeg: lat,
-        lonDeg: lon,
+        latDeg: _position!.latitude,
+        lonDeg: _position!.longitude,
         utc: utc,
       );
-      next[hip] = altaz;
     });
-
-    _altazByHip
-      ..clear()
-      ..addAll(next);
   }
 
   // -------------------------
-  // UI
+  // Derived (for projection / display)
   // -------------------------
+  double get _headingDeg => normalize360((-_yawRad) * 180.0 / math.pi);
+  double get _yawDeg => (-_yawRad) * 180.0 / math.pi;
+
   @override
   Widget build(BuildContext context) {
-    final size = MediaQuery.of(context).size;
-
     if (_camera == null || !_camera!.value.isInitialized) {
       return const Scaffold(
         backgroundColor: Colors.black,
@@ -335,101 +298,125 @@ class _CameraViewScreenState extends State<CameraViewScreen> {
       );
     }
 
-    // 투영 결과: hip -> ScreenPoint
-    final Map<int, ScreenPoint> screenPointsByHip = {};
-    if (_catalog != null && _position != null && _altazByHip.isNotEmpty) {
-      _altazByHip.forEach((hip, altaz) {
-        screenPointsByHip[hip] = projectAltAzToScreen(
-          star: altaz,
-          headingDeg: _headingDeg,
-          pitchDeg: _pitchDegCorrected,
-          rollDeg: _rollDegCorrected,
-          hFovDeg: _hFov,
-          vFovDeg: _vFov,
-          size: size,
-        );
-      });
-    }
+    final size = MediaQuery.of(context).size;
 
-    // Catalog 로딩 전이면 painter는 빈 값으로 동작 (아무것도 안 그림)
-    final lines = _catalog?.linesByCode ?? const <String, List<List<int>>>{};
+    // projection
+    final Map<int, ScreenPoint> screenPointsByHip = {};
+    _altazByHip.forEach((hip, altaz) {
+      if (altaz.altDeg < -5) return;
+      screenPointsByHip[hip] = projectAltAzToScreen(
+        star: altaz,
+        headingDeg: _headingDeg,
+        pitchDeg: _pitchDeg,
+        rollDeg: _rollDeg,
+        hFovDeg: _hFov,
+        vFovDeg: _vFov,
+        size: size,
+        hideBelowHorizon: true,
+      );
+    });
 
     return Scaffold(
       body: Stack(
         children: [
           CameraPreview(_camera!),
-
-          // ✅ 별자리 라인 오버레이
           IgnorePointer(
             child: CustomPaint(
               size: size,
               painter: ConstellationPainter(
-                linesByCode: lines,
+                linesByCode: _catalog?.linesByCode ?? {},
                 displayNameByCode: _displayNameByCode,
                 screenPointsByHip: screenPointsByHip,
+                showHorizon: true,
+                pitchDeg: _pitchDeg,
+                rollDeg: _rollDeg,
+                vFovDeg: _vFov,
               ),
             ),
           ),
-
-          // 상단 디버그 UI + 뒤로가기
-          _buildTopUI(context),
+          _buildOverlayPanel(context),
         ],
       ),
     );
   }
 
-  Widget _buildTopUI(BuildContext context) {
-    final gpsText = _gpsError ??
-        (_position == null
-            ? 'GPS: ...'
-            : 'GPS: ${_position!.latitude.toStringAsFixed(5)}, '
-                '${_position!.longitude.toStringAsFixed(5)}');
-
-    final catalogText = _catalogError != null
-        ? 'Catalog: ERROR ($_catalogError)'
-        : (_catalog == null
-            ? 'Catalog: loading...'
-            : 'Catalog: OK (lines=${_catalog!.linesByCode.length}, stars=${_catalog!.starsByHip.length})');
-
-    final attitudeText = 'Heading=${_headingDeg.toStringAsFixed(1)}° '
-        '| PitchCorr=${_pitchDegCorrected.toStringAsFixed(1)}° '
-        '| RollCorr=${_rollDegCorrected.toStringAsFixed(1)}°';
-
-    final cacheText = 'AltAz cache: ${_altazByHip.length} stars';
-
+  Widget _buildOverlayPanel(BuildContext context) {
     return Positioned(
       top: 50,
       left: 12,
       right: 12,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              IconButton(
-                icon: const Icon(Icons.close, color: Colors.white, size: 30),
-                onPressed: () => Navigator.pop(context),
-              ),
-              Expanded(
-                child: Text(
-                  gpsText,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(color: Colors.white, fontSize: 14),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          color: Colors.black54,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                IconButton(
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(),
+                  icon: const Icon(Icons.close, color: Colors.white, size: 26),
+                  onPressed: () => Navigator.pop(context),
                 ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 4),
-          Text(attitudeText,
-              style: const TextStyle(color: Colors.cyanAccent, fontSize: 13)),
-          const SizedBox(height: 2),
-          Text(catalogText,
-              style: const TextStyle(color: Colors.white70, fontSize: 12)),
-          const SizedBox(height: 2),
-          Text(cacheText,
-              style: const TextStyle(color: Colors.white70, fontSize: 12)),
-        ],
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    'LAT: ${_position?.latitude.toStringAsFixed(4)}  '
+                    'LON: ${_position?.longitude.toStringAsFixed(4)}',
+                    style: const TextStyle(color: Colors.white, fontSize: 13),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+
+            // yaw/pitch/roll 표시
+            Text(
+              'Yaw(raw)=${_yawDeg.toStringAsFixed(1)}°  '
+              'Heading=${_headingDeg.toStringAsFixed(1)}°\n'
+              'Pitch=${_pitchDeg.toStringAsFixed(1)}°  '
+              'Roll=${_rollDeg.toStringAsFixed(1)}°',
+              style: const TextStyle(color: Colors.cyanAccent, fontSize: 12.5),
+            ),
+            const SizedBox(height: 6),
+
+            // FPS/Hz (실제값 기반)
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  'Camera: ${_cameraFps.toStringAsFixed(1)} FPS',
+                  style: const TextStyle(
+                    color: Colors.greenAccent,
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                Text(
+                  'Sensor: ${_sensorHz.toStringAsFixed(1)} Hz',
+                  style: const TextStyle(
+                    color: Colors.orangeAccent,
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                Text(
+                  'UI: ${_uiTickMs}ms',
+                  style: const TextStyle(
+                    color: Colors.white70,
+                    fontSize: 11,
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
       ),
     );
   }

@@ -1,4 +1,4 @@
-# with_light_star
+# with-light-star
 
 별자리 관측/스토리 앱(Flutter) 프로젝트. 다른 에이전트가 빠르게 구조를 이해할 수 있도록 핵심 폴더만 요약합니다.
 
