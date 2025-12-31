@@ -1,0 +1,90 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>$(DEVELOPMENT_LANGUAGE)</string>
+
+	<key>CFBundleDisplayName</key>
+	<string>With Light Star</string>
+
+	<key>CFBundleExecutable</key>
+	<string>$(EXECUTABLE_NAME)</string>
+
+	<key>CFBundleIdentifier</key>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+
+	<key>CFBundleName</key>
+	<string>with_light_star</string>
+
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+
+	<key>CFBundleShortVersionString</key>
+	<string>$(FLUTTER_BUILD_NAME)</string>
+
+	<key>CFBundleSignature</key>
+	<string>????</string>
+
+	<key>CFBundleVersion</key>
+	<string>$(FLUTTER_BUILD_NUMBER)</string>
+
+	<key>LSRequiresIPhoneOS</key>
+	<true/>
+
+	<key>UILaunchStoryboardName</key>
+	<string>LaunchScreen</string>
+
+	<key>UIMainStoryboardFile</key>
+	<string>Main</string>
+
+	<key>UISupportedInterfaceOrientations</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
+		<string>UIInterfaceOrientationLandscapeRight</string>
+	</array>
+
+	<key>UISupportedInterfaceOrientations~ipad</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationPortraitUpsideDown</string>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
+		<string>UIInterfaceOrientationLandscapeRight</string>
+	</array>
+
+	<key>CADisableMinimumFrameDurationOnPhone</key>
+	<true/>
+
+	<key>UIApplicationSupportsIndirectInputEvents</key>
+	<true/>
+
+	<!-- ========================= -->
+	<!-- Privacy / Permissions -->
+	<!-- ========================= -->
+
+	<!-- Camera: camera plugin -->
+	<key>NSCameraUsageDescription</key>
+	<string>별자리 관측을 위해 카메라 화면 위에 별자리 라인을 표시합니다.</string>
+
+	<!-- Location: geolocator + (compass heading 안정성) -->
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>현재 위치 기준으로 별자리의 방향과 고도를 계산하기 위해 위치 정보를 사용합니다.</string>
+
+	<!-- Motion: sensors_plus (pitch/roll 등) -->
+	<key>NSMotionUsageDescription</key>
+	<string>기기 기울기/회전(AR 오버레이 정렬)을 위해 모션 센서 데이터를 사용합니다.</string>
+
+	<!--
+	POC 단계에서는 보통 아래 Always 권한은 필요 없습니다.
+	만약 백그라운드 위치 추적(예: 관측 기록 자동 저장)을 할 경우에만 사용하세요.
+
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>백그라운드에서도 관측 위치를 기록하기 위해 위치 정보를 사용합니다.</string>
+	-->
+
+</dict>
+</plist>

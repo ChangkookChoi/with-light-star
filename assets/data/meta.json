@@ -1,0 +1,9 @@
+{
+  "skyculture_id": "modern_iau",
+  "region": "World",
+  "edges_type": "iau",
+  "edges_epoch": "B1875",
+  "edges_source": "https://pbarbier.com/constellations/edges_18.txt",
+  "constellation_count": 88,
+  "required_hip_count": 745
+}

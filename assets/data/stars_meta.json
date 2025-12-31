@@ -1,0 +1,9 @@
+{
+  "required_hip_count": 745,
+  "found_star_count": 744,
+  "missing_hip_count": 1,
+  "source_file": "hyglike_from_athyg_v32.csv.gz",
+  "detected_delimiter": ",",
+  "ra_output_unit": "degrees (ra * 15 from hours)",
+  "dec_output_unit": "degrees"
+}
