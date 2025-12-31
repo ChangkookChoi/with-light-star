@@ -30,7 +30,7 @@ dependencies:
   permission_handler: ^11.3.1 # 카메라 및 위치 권한 요청 관리
   http: ^1.2.0             # GPT API 및 천문 데이터 API 통신용
   flutter_compass: ^0.8.0  # 나침반
-  motion_sensors: ^0.1.0   # fused sensor
+  motion_sensors: ^0.1.0   # fused attitude (heading, pitch, roll)
 
 
   # The following adds the Cupertino Icons font to your application.

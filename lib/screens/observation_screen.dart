@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'camera_view_screen.dart';
+import 'real_horizon_screen.dart';
 
 class MainObservationScreen extends StatefulWidget {
   const MainObservationScreen({Key? key}) : super(key: key);
@@ -22,9 +23,11 @@ class _MainObservationScreenState extends State<MainObservationScreen> {
         elevation: 4.0,
         backgroundColor: Colors.amberAccent,
         onPressed: () => _navigateToCamera(context),
-        child: Icon(Icons.camera_enhance,
-            color: const Color(0xFF0A0E21),
-            size: screenWidth * 0.075), // 화면 너비에 비례한 아이콘 크기
+        child: Icon(
+          Icons.camera_enhance,
+          color: const Color(0xFF0A0E21),
+          size: screenWidth * 0.075, // 화면 너비에 비례한 아이콘 크기
+        ),
       ),
       bottomNavigationBar: BottomAppBar(
         shape: const CircularNotchedRectangle(),
@@ -36,17 +39,43 @@ class _MainObservationScreenState extends State<MainObservationScreen> {
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              IconButton(
-                icon: Icon(Icons.home_filled,
-                    color: Colors.amberAccent, size: screenWidth * 0.07),
-                onPressed: () {},
+              // 왼쪽 그룹: Home + Horizon Test
+              Row(
+                children: [
+                  IconButton(
+                    icon: Icon(
+                      Icons.home_filled,
+                      color: Colors.amberAccent,
+                      size: screenWidth * 0.07,
+                    ),
+                    onPressed: () {},
+                  ),
+                  IconButton(
+                    tooltip: '지평선 테스트',
+                    icon: Icon(
+                      Icons.hdr_strong, // 지평선 느낌 아이콘
+                      color: Colors.white70,
+                      size: screenWidth * 0.07,
+                    ),
+                    onPressed: () => _navigateToRealHorizon(context),
+                  ),
+                ],
               ),
-              IconButton(
-                icon: Icon(Icons.auto_stories,
-                    color: Colors.white70, size: screenWidth * 0.07),
-                onPressed: () {
-                  // AI 스토리 북 버튼 (의뢰서 요구사항 반영)
-                },
+
+              // 오른쪽 그룹: Storybook(기존)
+              Row(
+                children: [
+                  IconButton(
+                    icon: Icon(
+                      Icons.auto_stories,
+                      color: Colors.white70,
+                      size: screenWidth * 0.07,
+                    ),
+                    onPressed: () {
+                      // AI 스토리 북 버튼 (의뢰서 요구사항 반영)
+                    },
+                  ),
+                ],
               ),
             ],
           ),
@@ -86,6 +115,16 @@ class _MainObservationScreenState extends State<MainObservationScreen> {
     );
   }
 
+  // ✅ 추가: 지평선 테스트 화면으로 이동
+  void _navigateToRealHorizon(BuildContext context) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => const RealHorizonScreen(),
+      ),
+    );
+  }
+
   Widget _buildBackground() {
     return Container(
       decoration: const BoxDecoration(
@@ -104,12 +143,15 @@ class _MainObservationScreenState extends State<MainObservationScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text("강원도 평창군",
-              style: TextStyle(
-                  fontSize: screenWidth * 0.075, // 화면 너비에 맞춘 폰트 크기
-                  fontWeight: FontWeight.bold,
-                  letterSpacing: -1)),
-          SizedBox(height: 12),
+          Text(
+            "강원도 평창군",
+            style: TextStyle(
+              fontSize: screenWidth * 0.075, // 화면 너비에 맞춘 폰트 크기
+              fontWeight: FontWeight.bold,
+              letterSpacing: -1,
+            ),
+          ),
+          const SizedBox(height: 12),
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
             decoration: BoxDecoration(
@@ -117,11 +159,14 @@ class _MainObservationScreenState extends State<MainObservationScreen> {
               borderRadius: BorderRadius.circular(30),
               border: Border.all(color: Colors.amberAccent.withOpacity(0.4)),
             ),
-            child: Text("✨ 보틀 등급 2: 관측 최적기",
-                style: TextStyle(
-                    color: Colors.amberAccent,
-                    fontSize: screenWidth * 0.032,
-                    fontWeight: FontWeight.w500)),
+            child: Text(
+              "✨ 보틀 등급 2: 관측 최적기",
+              style: TextStyle(
+                color: Colors.amberAccent,
+                fontSize: screenWidth * 0.032,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
           ),
         ],
       ),
@@ -146,10 +191,13 @@ class _MainObservationScreenState extends State<MainObservationScreen> {
                 Icon(Icons.auto_awesome,
                     color: Colors.amberAccent, size: screenWidth * 0.05),
                 const SizedBox(width: 8),
-                Text("오늘 밤 관측 가이드",
-                    style: TextStyle(
-                        fontSize: screenWidth * 0.045,
-                        fontWeight: FontWeight.bold)),
+                Text(
+                  "오늘 밤 관측 가이드",
+                  style: TextStyle(
+                    fontSize: screenWidth * 0.045,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
               ],
             ),
             const SizedBox(height: 20),
@@ -170,9 +218,13 @@ class _MainObservationScreenState extends State<MainObservationScreen> {
         children: [
           Icon(icon, size: screenWidth * 0.05, color: Colors.white54),
           const SizedBox(width: 12),
-          Text(text,
-              style: TextStyle(
-                  color: Colors.white70, fontSize: screenWidth * 0.035)),
+          Text(
+            text,
+            style: TextStyle(
+              color: Colors.white70,
+              fontSize: screenWidth * 0.035,
+            ),
+          ),
         ],
       ),
     );
@@ -185,9 +237,13 @@ class _MainObservationScreenState extends State<MainObservationScreen> {
         Padding(
           padding: EdgeInsets.symmetric(
               horizontal: screenWidth * 0.07, vertical: 16),
-          child: Text("지금 이곳 추천 별자리 TOP 3",
-              style: TextStyle(
-                  fontSize: screenWidth * 0.045, fontWeight: FontWeight.bold)),
+          child: Text(
+            "지금 이곳 추천 별자리 TOP 3",
+            style: TextStyle(
+              fontSize: screenWidth * 0.045,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
         ),
         SizedBox(
           height: screenHeight * 0.22,
@@ -219,17 +275,29 @@ class _MainObservationScreenState extends State<MainObservationScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(title,
-              style: TextStyle(
-                  fontSize: screenWidth * 0.045, fontWeight: FontWeight.bold)),
+          Text(
+            title,
+            style: TextStyle(
+              fontSize: screenWidth * 0.045,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
           const SizedBox(height: 6),
-          Text(visibility,
-              style: TextStyle(
-                  color: Colors.amberAccent, fontSize: screenWidth * 0.03)),
+          Text(
+            visibility,
+            style: TextStyle(
+              color: Colors.amberAccent,
+              fontSize: screenWidth * 0.03,
+            ),
+          ),
           const Spacer(),
-          Text(desc,
-              style: TextStyle(
-                  color: Colors.white54, fontSize: screenWidth * 0.03)),
+          Text(
+            desc,
+            style: TextStyle(
+              color: Colors.white54,
+              fontSize: screenWidth * 0.03,
+            ),
+          ),
         ],
       ),
     );
