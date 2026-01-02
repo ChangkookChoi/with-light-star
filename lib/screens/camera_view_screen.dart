@@ -23,7 +23,7 @@ class CameraViewScreen extends StatefulWidget {
 
 class _CameraViewScreenState extends State<CameraViewScreen> {
   // -------------------------
-  // Camera & FPS
+  // Camera & FPS test
   // -------------------------
   CameraController? _camera;
   double _cameraFps = 0.0;
