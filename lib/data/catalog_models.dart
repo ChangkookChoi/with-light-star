@@ -22,11 +22,13 @@ class Star {
 }
 
 class ConstellationName {
+  final String korean;
   final String english;
   final String nativeName;
   final String byname;
 
   const ConstellationName({
+    required this.korean,
     required this.english,
     required this.nativeName,
     required this.byname,
@@ -34,6 +36,7 @@ class ConstellationName {
 
   factory ConstellationName.fromJson(Map<String, dynamic> j) =>
       ConstellationName(
+        korean: (j['korean'] ?? '').toString(),
         english: (j['english'] ?? '').toString(),
         nativeName: (j['native'] ?? '').toString(),
         byname: (j['byname'] ?? '').toString(),
@@ -41,6 +44,9 @@ class ConstellationName {
 
   /// POC: 표시 우선순위 (native -> english -> byname)
   String displayName() {
+    final k = korean.trim();
+    if (k.isNotEmpty) return k;
+
     final n = nativeName.trim();
     if (n.isNotEmpty) return n;
 
