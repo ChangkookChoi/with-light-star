@@ -78,6 +78,10 @@
 	<key>NSMotionUsageDescription</key>
 	<string>기기 기울기/회전(AR 오버레이 정렬)을 위해 모션 센서 데이터를 사용합니다.</string>
 
+	<key>NSCameraUsageDescription</key>
+	<string>별자리 AR 표시를 위해 카메라 접근이 필요합니다.</string>
+
+
 	<!--
 	POC 단계에서는 보통 아래 Always 권한은 필요 없습니다.
 	만약 백그라운드 위치 추적(예: 관측 기록 자동 저장)을 할 경우에만 사용하세요.

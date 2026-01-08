@@ -273,20 +273,21 @@ class _CameraViewScreenState extends State<CameraViewScreen> {
 
     _altazByHip.clear();
     _catalog!.starsByHip.forEach((hip, star) {
-      _altazByHip[hip] = radecToAltAz(
-        raDeg: star.raDeg,
-        decDeg: star.decDeg,
-        latDeg: _position!.latitude,
-        lonDeg: _position!.longitude,
-        utc: utc,
-      );
+      // _altazByHip[hip] = radecToAltAz(
+      //   raDeg: star.raDeg,
+      //   decDeg: star.decDeg,
+      //   latDeg: _position!.latitude,
+      //   lonDeg: _position!.longitude,
+      //   utc: utc,
+      // );
     });
   }
 
   // -------------------------
   // Derived (for projection / display)
   // -------------------------
-  double get _headingDeg => normalize360((-_yawRad) * 180.0 / math.pi);
+  // double get _headingDeg => normalize360((-_yawRad) * 180.0 / math.pi);
+  double get _headingDeg => 0;
   double get _yawDeg => (-_yawRad) * 180.0 / math.pi;
 
   @override

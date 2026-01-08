@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'camera_view_screen.dart';
 import 'real_horizon_screen.dart';
+import 'arkit_camera_view_screen.dart';
 
 class MainObservationScreen extends StatefulWidget {
   const MainObservationScreen({Key? key}) : super(key: key);
@@ -58,6 +59,15 @@ class _MainObservationScreenState extends State<MainObservationScreen> {
                       size: screenWidth * 0.07,
                     ),
                     onPressed: () => _navigateToRealHorizon(context),
+                  ),
+                  IconButton(
+                    tooltip: 'ARKit Test',
+                    icon: Icon(
+                      Icons.architecture_sharp, // 지평선 느낌 아이콘
+                      color: Colors.white70,
+                      size: screenWidth * 0.07,
+                    ),
+                    onPressed: () => _navigateToARKit(context),
                   ),
                 ],
               ),
@@ -121,6 +131,16 @@ class _MainObservationScreenState extends State<MainObservationScreen> {
       context,
       MaterialPageRoute(
         builder: (context) => const RealHorizonScreen(),
+      ),
+    );
+  }
+
+  // ✅ 추가: AR 테스트 화면으로 이동
+  void _navigateToARKit(BuildContext context) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => const ArkitCameraViewScreen(),
       ),
     );
   }

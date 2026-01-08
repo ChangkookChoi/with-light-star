@@ -28,7 +28,8 @@ ScreenPoint projectAltAzToScreen({
   }
 
   // 좌/우 (방위차)
-  final dAz = normalize180(star.azDeg - headingDeg);
+  // final dAz = normalize180(star.azDeg - headingDeg);
+  final dAz = 0;
 
   // 상/하 (고도차)
   final dAlt = star.altDeg - pitchDeg;
