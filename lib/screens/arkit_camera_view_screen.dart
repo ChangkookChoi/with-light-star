@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:arkit_plugin/arkit_plugin.dart';
@@ -20,43 +21,32 @@ class ArkitCameraViewScreen extends StatefulWidget {
 
 class _ArkitCameraViewScreenState extends State<ArkitCameraViewScreen> {
   ARKitController? _arkit;
-
   CatalogData? _catalog;
+
   bool _loading = true;
+  bool _busy = false;
 
   Size? _cameraImageSize;
 
-  bool _useHeadingAlignment = true;
+  // ===== UX 설정 =====
+  final double _overlayScale = 0.88;
+  final double _maxMagToDraw = 5.0;
   bool _showDebugOverlay = true;
 
-  // ✅ “너무 가득 차 보임”을 줄이는 핵심 파라미터
-  double _overlayScale = 0.78; // 0.80~0.92 추천
-
-  // 별 표시 기준 (조절해서 밀도를 줄일 수 있음)
-  double _maxMagToDraw = 4.5; // 6.0이면 꽤 많아짐. 4.5~5.5 추천
-
-  // sky-dome 반경(멀수록 parallax 영향 ↓). 투영 위치 자체는 거의 동일하지만 안정성 측면에서 충분히 크게 둡니다.
-  static const double _R = 1000.0;
-
+  static const double _R = 100.0;
   DateTime _lastUpdate = DateTime.fromMillisecondsSinceEpoch(0);
-  bool _busy = false;
 
-  // 결과(화면 좌표)
   List<StarDot> _stars = const [];
   List<({Offset a, Offset b})> _segments = const [];
   List<({Offset p, String label})> _labels = const [];
-
-  // 디버그 오버레이
   Map<String, Offset> _cardinals = const {};
   List<Offset> _horizon = const [];
 
-  // 라인 포함 hip 집합(성능 최적화)
-  Set<int> _hipsInLines = <int>{};
+  Set<int> _hipsInLines = {};
 
-  // ===== 위치(임시) =====
-  // TODO: 기존 프로젝트 위치 로직이 있으면 연결하세요.
-  double _latDeg = 37.5665;
-  double _lonDeg = 126.9780;
+  // 서울 기준 위치
+  final double _latDeg = 37.5665;
+  final double _lonDeg = 126.9780;
 
   @override
   void initState() {
@@ -64,36 +54,33 @@ class _ArkitCameraViewScreenState extends State<ArkitCameraViewScreen> {
     _loadCatalog();
   }
 
-  Future<void> _loadCatalog() async {
-    setState(() => _loading = true);
-    final data = await CatalogLoader.loadOnce();
-
-    final hips = <int>{};
-    for (final entry in data.linesByCode.entries) {
-      for (final poly in entry.value) {
-        hips.addAll(poly);
-      }
-    }
-
-    setState(() {
-      _catalog = data;
-      _hipsInLines = hips;
-      _loading = false;
-    });
-  }
-
   @override
   void dispose() {
+    // 메모리 누수 방지를 위해 컨트롤러 정리
     _arkit?.dispose();
     super.dispose();
   }
 
-  Future<void> _onARKitViewCreated(ARKitController controller) async {
-    _arkit = controller;
+  Future<void> _loadCatalog() async {
+    setState(() => _loading = true);
+    final data = await CatalogLoader.loadOnce();
+    final hips = <int>{};
+    for (final v in data.linesByCode.values) {
+      for (final poly in v) {
+        hips.addAll(poly);
+      }
+    }
+    if (mounted) {
+      setState(() {
+        _catalog = data;
+        _hipsInLines = hips;
+        _loading = false;
+      });
+    }
+  }
 
-    controller.onCameraDidChangeTrackingState = (state, reason) {
-      // debugPrint('trackingState=$state reason=$reason');
-    };
+  void _onARKitViewCreated(ARKitController controller) async {
+    _arkit = controller;
 
     try {
       _cameraImageSize = await controller.getCameraImageResolution();
@@ -105,51 +92,69 @@ class _ArkitCameraViewScreenState extends State<ArkitCameraViewScreen> {
   }
 
   void _tick() {
-    if (!mounted) return;
-    if (_loading || _catalog == null || _arkit == null) return;
+    // [최적화] 화면이 살아있지 않거나, 로딩 중이면 연산 스킵
+    if (!mounted || _loading || _catalog == null || _arkit == null) return;
 
-    // 15~20fps 정도
     final now = DateTime.now();
-    if (now.difference(_lastUpdate).inMilliseconds < 60) return;
+    // 16ms (60fps) 제한. 기기 성능에 따라 32ms(30fps)로 늘려도 됨.
+    if (now.difference(_lastUpdate).inMilliseconds < 16) return;
     _lastUpdate = now;
 
     if (_busy) return;
     _busy = true;
 
-    _computeOverlay(_arkit!, _catalog!).whenComplete(() => _busy = false);
+    _computeOverlay(_arkit!, _catalog!).whenComplete(() {
+      if (mounted) _busy = false;
+    });
   }
 
   Future<void> _computeOverlay(ARKitController c, CatalogData catalog) async {
     final camPos = await c.cameraPosition();
-    if (!mounted || camPos == null) return;
+    final camToWorld = await c.pointOfViewTransform();
+    if (!mounted || camPos == null || camToWorld == null) return;
 
+    final worldToCam = v.Matrix4.copy(camToWorld)..invert();
     final nowUtc = DateTime.now().toUtc();
-
-    final screenSize = MediaQuery.sizeOf(context);
-    final center = Offset(screenSize.width / 2, screenSize.height / 2);
+    final screen = MediaQuery.sizeOf(context);
+    final center = Offset(screen.width / 2, screen.height / 2);
 
     Offset? mapAndScale(double px, double py) {
       final p = _mapCameraPixelToScreen(px, py);
       if (p == null) return null;
-      // ✅ 화면 중심 기준 “줌아웃” 스케일 적용
-      final scaled = center + (p - center) * _overlayScale;
-      return scaled;
+      return center + (p - center) * _overlayScale;
     }
 
-    // hip -> screen point
+    bool isInFront(v.Vector3 wp) {
+      final cp4 = worldToCam.transform(v.Vector4(wp.x, wp.y, wp.z, 1));
+      return cp4.z < -0.1;
+    }
+
+    // --- 디버그용 방위 표시 ---
+    Map<String, Offset> cardinals = {};
+    List<Offset> horizon = [];
+    if (_showDebugOverlay) {
+      const dirs = {'N': 0.0, 'E': 90.0, 'S': 180.0, 'W': 270.0};
+      for (final e in dirs.entries) {
+        final wp = _altAzToWorldPoint(AltAz(0, e.value), camPos);
+        if (!isInFront(wp)) continue;
+        final pr = await c.projectPoint(wp);
+        if (pr == null) continue;
+        final pt = mapAndScale(pr.x, pr.y);
+        if (pt != null) cardinals[e.key] = pt;
+      }
+    }
+
+    // --- 별 계산 ---
     final hipToPt = <int, Offset>{};
+    final stars = <StarDot>[];
 
-    final starDots = <StarDot>[];
-
-    // 별 계산: (라인에 포함된 hip) 또는 (밝은 별)만
+    // [최적화] 반복문 내부 연산 최소화
     for (final entry in catalog.starsByHip.entries) {
       final hip = entry.key;
       final star = entry.value;
-      final mag = star.mag ?? 99.0;
+      final mag = star.mag ?? 99;
 
-      final shouldConsider = _hipsInLines.contains(hip) || mag <= _maxMagToDraw;
-      if (!shouldConsider) continue;
-      if (mag > _maxMagToDraw) continue;
+      if (!_hipsInLines.contains(hip) && mag > _maxMagToDraw) continue;
 
       final altAz = raDecToAltAz(
         raDeg: star.raDeg,
@@ -159,36 +164,37 @@ class _ArkitCameraViewScreenState extends State<ArkitCameraViewScreen> {
         utc: nowUtc,
       );
 
-      // 지평선 아래 제거
-      if (altAz.altDeg <= 0) continue;
+      if (altAz.altDeg <= -5) continue;
 
-      final worldPoint = _altAzToWorldPoint(altAz, camPos);
+      final wp = _altAzToWorldPoint(AltAz(altAz.altDeg, altAz.azDeg), camPos);
+      if (!isInFront(wp)) continue;
 
-      final projected = await c.projectPoint(worldPoint);
-      if (!mounted || projected == null) continue;
+      final pr = await c.projectPoint(wp);
+      if (pr == null) continue;
 
-      final pt = mapAndScale(projected.x, projected.y);
+      final pt = mapAndScale(pr.x, pr.y);
       if (pt == null) continue;
 
       hipToPt[hip] = pt;
-      starDots.add(StarDot(p: pt, mag: mag));
+      stars.add(StarDot(p: pt, mag: mag));
     }
 
-    // 선 segments
+    // --- 별자리 선 연결 ---
     final segments = <({Offset a, Offset b})>[];
     for (final entry in catalog.linesByCode.entries) {
       for (final poly in entry.value) {
-        if (poly.length < 2) continue;
+        // [최적화] 선 연결 시 null 체크를 미리 수행하여 불필요한 리스트 추가 방지
         for (var i = 0; i < poly.length - 1; i++) {
           final a = hipToPt[poly[i]];
           final b = hipToPt[poly[i + 1]];
-          if (a == null || b == null) continue;
-          segments.add((a: a, b: b));
+          if (a != null && b != null) {
+            segments.add((a: a, b: b));
+          }
         }
       }
     }
 
-    // 별자리 라벨(너무 많으면 화면 중심 가까운 상위 N개만)
+    // --- 라벨 계산 ---
     final rawLabels = <({Offset p, String label})>[];
     for (final code in catalog.linesByCode.keys) {
       final name = catalog.namesByCode[code]?.displayName() ?? '';
@@ -196,6 +202,7 @@ class _ArkitCameraViewScreenState extends State<ArkitCameraViewScreen> {
 
       int count = 0;
       double sx = 0, sy = 0;
+
       for (final poly in catalog.linesByCode[code]!) {
         for (final hip in poly) {
           final p = hipToPt[hip];
@@ -205,266 +212,129 @@ class _ArkitCameraViewScreenState extends State<ArkitCameraViewScreen> {
           count++;
         }
       }
-      if (count < 3) continue;
 
-      final centroid = Offset(sx / count, sy / count);
-      rawLabels.add((p: centroid, label: name));
+      if (count >= 1) {
+        rawLabels.add((p: Offset(sx / count, sy / count), label: name));
+      }
     }
 
-    rawLabels.sort((a, b) {
-      final da = (a.p - center).distanceSquared;
-      final db = (b.p - center).distanceSquared;
-      return da.compareTo(db);
-    });
-
-    final labels = rawLabels.take(10).toList(); // ✅ 최대 10개만 표시
-
-    // ===== 디버그 오버레이 계산 =====
-    Map<String, Offset> cardinals = {};
-    List<Offset> horizon = [];
-
-    if (_showDebugOverlay) {
-      // N/E/S/W (Alt=0)
-      final ne = <String, AltAz>{
-        'N': AltAz(0, 0),
-        'E': AltAz(0, 90),
-        'S': AltAz(0, 180),
-        'W': AltAz(0, 270),
-      };
-
-      for (final entry in ne.entries) {
-        final wp = _altAzToWorldPoint(entry.value, camPos);
-        final pr = await c.projectPoint(wp);
-        if (!mounted || pr == null) continue;
-        final pt = mapAndScale(pr.x, pr.y);
-        if (pt == null) continue;
-        cardinals[entry.key] = pt;
-      }
-
-      // horizon polyline: Alt=0, Az 0..360 step 10
-      final pts = <Offset>[];
-      for (int az = 0; az <= 360; az += 10) {
-        final aa = AltAz(0, az.toDouble());
-        final wp = _altAzToWorldPoint(aa, camPos);
-        final pr = await c.projectPoint(wp);
-        if (!mounted || pr == null) continue;
-        final pt = mapAndScale(pr.x, pr.y);
-        if (pt == null) continue;
-
-        // 화면 근처만 넣기(너무 멀리 튀면 라인이 이상해짐)
-        if (pt.dx < -200 ||
-            pt.dy < -200 ||
-            pt.dx > screenSize.width + 200 ||
-            pt.dy > screenSize.height + 200) {
-          continue;
-        }
-        pts.add(pt);
-      }
-      horizon = pts;
+    if (mounted) {
+      setState(() {
+        _stars = stars;
+        _segments = segments;
+        _labels = rawLabels;
+        _cardinals = cardinals;
+        _horizon = horizon;
+      });
     }
-
-    setState(() {
-      _stars = starDots;
-      _segments = segments;
-      _labels = labels;
-      _cardinals = cardinals;
-      _horizon = horizon;
-    });
   }
 
   v.Vector3 _altAzToWorldPoint(AltAz aa, v.Vector3 camPos) {
-    final az = aa.azDeg * math.pi / 180.0;
-    final alt = aa.altDeg * math.pi / 180.0;
+    final azRad = aa.azDeg * math.pi / 180;
+    final altRad = aa.altDeg * math.pi / 180;
 
-    // ENU
-    final e = math.cos(alt) * math.sin(az);
-    final n = math.cos(alt) * math.cos(az);
-    final u = math.sin(alt);
+    final x = math.sin(azRad) * math.cos(altRad);
+    final y = math.sin(altRad);
+    final z = -math.cos(azRad) * math.cos(altRad);
 
-    // worldAlignment: gravity+heading 기대치: x=E, y=U, z=N
-    final dir = v.Vector3(e, u, n);
-    if (dir.length == 0) return camPos;
-    dir.normalize();
-
-    return v.Vector3(
-      camPos.x + dir.x * _R,
-      camPos.y + dir.y * _R,
-      camPos.z + dir.z * _R,
-    );
+    return camPos + (v.Vector3(x, y, z) * _R);
   }
 
   Offset? _mapCameraPixelToScreen(double px, double py) {
     final screen = MediaQuery.sizeOf(context);
-
     final cam = _cameraImageSize;
-    if (cam == null || cam.width == 0 || cam.height == 0) {
-      if (px.isNaN || py.isNaN) return null;
-      return Offset(px, py);
-    }
-
-    final sx = px * (screen.width / cam.width);
-    final sy = py * (screen.height / cam.height);
-
-    if (sx.isNaN || sy.isNaN) return null;
-    return Offset(sx, sy);
+    if (cam == null || cam.width == 0 || cam.height == 0) return Offset(px, py);
+    return Offset(
+        px * (screen.width / cam.width), py * (screen.height / cam.height));
   }
 
   @override
   Widget build(BuildContext context) {
-    if (_loading) {
-      return const Scaffold(body: Center(child: CircularProgressIndicator()));
-    }
+    if (_loading)
+      return const Scaffold(
+          backgroundColor: Colors.black,
+          body: Center(child: CircularProgressIndicator()));
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('AR Observation (ARKit)'),
-        actions: [
-          IconButton(
-            tooltip: 'Reload catalog',
-            onPressed: _loadCatalog,
-            icon: const Icon(Icons.refresh),
-          ),
-          IconButton(
-            tooltip: _useHeadingAlignment ? 'gravity+heading' : 'gravity',
-            onPressed: () =>
-                setState(() => _useHeadingAlignment = !_useHeadingAlignment),
-            icon:
-                Icon(_useHeadingAlignment ? Icons.explore : Icons.explore_off),
-          ),
-          IconButton(
-            tooltip: _showDebugOverlay ? 'debug ON' : 'debug OFF',
-            onPressed: () =>
-                setState(() => _showDebugOverlay = !_showDebugOverlay),
-            icon: Icon(_showDebugOverlay
-                ? Icons.bug_report
-                : Icons.bug_report_outlined),
-          ),
-        ],
-      ),
+      backgroundColor: Colors.black,
       body: Stack(
         children: [
+          // 1. AR View
           ARKitSceneView(
             onARKitViewCreated: _onARKitViewCreated,
-            showFeaturePoints: false,
-            worldAlignment: _useHeadingAlignment
-                ? ARWorldAlignment.gravityAndHeading
-                : ARWorldAlignment.gravity,
+            configuration: ARKitConfiguration.worldTracking,
+            worldAlignment: ARWorldAlignment.gravityAndHeading,
           ),
 
-          IgnorePointer(
-            child: CustomPaint(
-              size: Size.infinite,
-              painter: ArkitSkyPainter(
-                stars: _stars,
-                lineSegments: _segments,
-                labels: _labels,
+          // 2. 별자리 오버레이 (RepaintBoundary로 최적화)
+          Positioned.fill(
+            child: IgnorePointer(
+              child: RepaintBoundary(
+                // [최적화] 불필요한 전체 리페인팅 방지
+                child: CustomPaint(
+                  painter: ArkitSkyPainter(
+                    stars: _stars,
+                    lineSegments: _segments,
+                    labels: _labels,
+                  ),
+                ),
               ),
             ),
           ),
 
+          // 3. 디버그 오버레이
           if (_showDebugOverlay)
-            IgnorePointer(
-              child: CustomPaint(
-                size: Size.infinite,
-                painter: ArkitDebugPainter(
-                  cardinals: _cardinals,
-                  horizon: _horizon,
+            Positioned.fill(
+              child: IgnorePointer(
+                child: RepaintBoundary(
+                  child: CustomPaint(
+                    painter: ArkitDebugPainter(
+                      cardinals: _cardinals,
+                      horizon: _horizon,
+                    ),
+                  ),
                 ),
               ),
             ),
 
-          // 간단 상태
+          // 4. [추가됨] 뒤로가기 버튼
           Positioned(
-            left: 12,
-            bottom: 12,
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                color: Colors.black.withOpacity(0.45),
-                borderRadius: BorderRadius.circular(10),
-              ),
+            top: 0,
+            left: 0,
+            child: SafeArea(
+              // 노치 영역 침범 방지
               child: Padding(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                child: Text(
-                  'stars=${_stars.length}  lines=${_segments.length}  labels=${_labels.length}\n'
-                  'alignment=${_useHeadingAlignment ? "gravity+heading" : "gravity"}  '
-                  'scale=${_overlayScale.toStringAsFixed(2)}  mag<=${_maxMagToDraw.toStringAsFixed(1)}',
-                  style: const TextStyle(color: Colors.white, fontSize: 12),
+                padding: const EdgeInsets.all(8.0),
+                child: IconButton(
+                  icon: const Icon(Icons.arrow_back_ios_new,
+                      color: Colors.white, size: 28),
+                  onPressed: () {
+                    Navigator.of(context).pop(); // 홈 화면으로 이동
+                  },
                 ),
               ),
             ),
           ),
 
-          // “살짝만 작게”를 실시간으로 조절할 수 있게 슬라이더(원하면 삭제 가능)
+          // 5. 안내 텍스트 (위치 약간 조정)
           Positioned(
-            right: 12,
-            bottom: 12,
-            child: SizedBox(
-              width: 180,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  _MiniSlider(
-                    label: 'Scale',
-                    value: _overlayScale,
-                    min: 0.78,
-                    max: 1.00,
-                    onChanged: (v) => setState(() => _overlayScale = v),
-                  ),
-                  _MiniSlider(
-                    label: 'Mag',
-                    value: _maxMagToDraw,
-                    min: 3.5,
-                    max: 6.0,
-                    onChanged: (v) => setState(() => _maxMagToDraw = v),
-                  ),
-                ],
+            top: 60,
+            left: 20,
+            child: IgnorePointer(
+              child: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                decoration: BoxDecoration(
+                    color: Colors.black45,
+                    borderRadius: BorderRadius.circular(8)),
+                child: const Text(
+                  "AR Mode | N:북 E:동",
+                  style: TextStyle(color: Colors.white70, fontSize: 12),
+                ),
               ),
             ),
           ),
         ],
-      ),
-    );
-  }
-}
-
-class _MiniSlider extends StatelessWidget {
-  final String label;
-  final double value;
-  final double min;
-  final double max;
-  final ValueChanged<double> onChanged;
-
-  const _MiniSlider({
-    required this.label,
-    required this.value,
-    required this.min,
-    required this.max,
-    required this.onChanged,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: Colors.black.withOpacity(0.35),
-        borderRadius: BorderRadius.circular(10),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('$label: ${value.toStringAsFixed(2)}',
-                style: const TextStyle(color: Colors.white, fontSize: 12)),
-            Slider(
-              value: value,
-              min: min,
-              max: max,
-              onChanged: onChanged,
-            ),
-          ],
-        ),
       ),
     );
   }
