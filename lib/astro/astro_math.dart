@@ -160,4 +160,40 @@ class AstroMath {
     if (age < 23.1) return "하현달";
     return "그믐달";
   }
+
+  // astro/astro_math.dart 파일의 AstroMath 클래스 내부에 추가
+
+  /// 날짜(UTC)에 따른 태양의 적경(RA), 적위(Dec) 계산
+  static ({double ra, double dec}) getSunRaDec(DateTime utc) {
+    // J2000 기준 일수
+    final d = utc.difference(DateTime.utc(2000, 1, 1, 12)).inSeconds / 86400.0;
+
+    // 태양의 평균 황경 (Mean Longitude)
+    final L = (280.460 + 0.9856474 * d) % 360.0;
+    // 태양의 평균 근점 이각 (Mean Anomaly)
+    final g = (357.528 + 0.9856003 * d) % 360.0;
+    final gRad = g * math.pi / 180.0;
+
+    // 황도 경도 (Ecliptic Longitude)
+    final lambda = L + 1.915 * math.sin(gRad) + 0.020 * math.sin(2 * gRad);
+    final lamRad = lambda * math.pi / 180.0;
+
+    // 황도 경사각 (Obliquity of Ecliptic)
+    final epsilon = 23.439 - 0.0000004 * d;
+    final epsRad = epsilon * math.pi / 180.0;
+
+    // 적도 좌표계 변환 (RA, Dec)
+    final x = math.cos(lamRad);
+    final y = math.cos(epsRad) * math.sin(lamRad);
+    final z = math.sin(epsRad) * math.sin(lamRad);
+
+    final raRad = math.atan2(y, x);
+    final decRad = math.asin(z);
+
+    double ra = raRad * 180.0 / math.pi;
+    if (ra < 0) ra += 360.0;
+    final dec = decRad * 180.0 / math.pi;
+
+    return (ra: ra, dec: dec);
+  }
 }

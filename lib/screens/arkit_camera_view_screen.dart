@@ -9,8 +9,6 @@ import '../astro/astro_math.dart';
 import '../astro/types.dart';
 import '../data/catalog_loader.dart';
 import '../data/catalog_models.dart';
-import '../widgets/arkit_sky_painter.dart';
-import '../widgets/arkit_debug_painter.dart';
 
 class ArkitCameraViewScreen extends StatefulWidget {
   const ArkitCameraViewScreen({super.key});
@@ -19,35 +17,32 @@ class ArkitCameraViewScreen extends StatefulWidget {
   State<ArkitCameraViewScreen> createState() => _ArkitCameraViewScreenState();
 }
 
-class _ArkitCameraViewScreenState extends State<ArkitCameraViewScreen> {
+class _ArkitCameraViewScreenState extends State<ArkitCameraViewScreen>
+    with WidgetsBindingObserver {
   ARKitController? _arkit;
   CatalogData? _catalog;
 
   bool _loading = true;
-  bool _busy = false;
+  bool _isStabilizing = true;
 
   Size? _cameraImageSize;
 
-  // ===== UX 설정 =====
-  final double _overlayScale = 0.88;
-  final double _maxMagToDraw = 5.0;
-  bool _showDebugOverlay = true;
+  // ===== 3D 거리 설정 =====
+  final double _maxMagForBackground = 4.5;
 
-  // [중요] 3D 달 위치 설정
-  // 별보다 조금 더 가깝게 두어서(90m) 별들이 달 뒤로 숨는 효과를 줄 수도 있음
-  static const double _starDistance = 100.0;
-  static const double _moonDistance = 90.0;
+  static const double _starDistance = 150.0; // 별
+  static const double _labelDistance = 140.0; // 이름 (별보다 10m 앞)
+  static const double _moonDistance = 130.0;
+  static const double _sunDistance = 300.0;
 
   DateTime _lastUpdate = DateTime.fromMillisecondsSinceEpoch(0);
 
-  List<StarDot> _stars = const [];
-  // MoonDot? _moon; // [삭제] 2D 달 변수 삭제
-  ARKitNode? _moonNode; // [추가] 3D 달 노드 관리용
+  ARKitNode? _moonNode;
+  ARKitNode? _lightNode;
+  ARKitNode? _horizonNode;
 
-  List<({Offset a, Offset b})> _segments = const [];
-  List<({Offset p, String label})> _labels = const [];
-  Map<String, Offset> _cardinals = const {};
-  List<Offset> _horizon = const [];
+  List<ARKitNode> _labelNodes = [];
+  int _frameCount = 0;
 
   Set<int> _hipsInLines = {};
 
@@ -57,24 +52,59 @@ class _ArkitCameraViewScreenState extends State<ArkitCameraViewScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _loadCatalog();
+
+    Future.delayed(const Duration(seconds: 2), () {
+      if (mounted) {
+        setState(() {
+          _isStabilizing = false;
+        });
+        if (_arkit != null && _catalog != null) {
+          _init3DScene();
+        }
+      }
+    });
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _arkit?.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _reloadScreen();
+    }
+  }
+
+  void _reloadScreen() {
+    if (!mounted) return;
+    Navigator.pushReplacement(
+      context,
+      PageRouteBuilder(
+        pageBuilder: (context, animation1, animation2) =>
+            const ArkitCameraViewScreen(),
+        transitionDuration: Duration.zero,
+        reverseTransitionDuration: Duration.zero,
+      ),
+    );
   }
 
   Future<void> _loadCatalog() async {
     setState(() => _loading = true);
     final data = await CatalogLoader.loadOnce();
+
     final hips = <int>{};
     for (final v in data.linesByCode.values) {
       for (final poly in v) {
         hips.addAll(poly);
       }
     }
+
     if (mounted) {
       setState(() {
         _catalog = data;
@@ -91,218 +121,353 @@ class _ArkitCameraViewScreenState extends State<ArkitCameraViewScreen> {
     } catch (_) {
       _cameraImageSize = null;
     }
+
+    if (!_isStabilizing && _catalog != null) {
+      _init3DScene();
+    }
+
     controller.updateAtTime = (_) => _tick();
+  }
+
+  void _init3DScene() {
+    if (_arkit == null || _catalog == null) return;
+
+    _addHorizonGuide(_arkit!);
+    _addStars3D(_arkit!, _catalog!);
+    _addLines3D(_arkit!, _catalog!);
+    _addLabels3D(_arkit!, _catalog!);
   }
 
   void _tick() {
     if (!mounted || _loading || _catalog == null || _arkit == null) return;
+    if (_isStabilizing) return;
+
     final now = DateTime.now();
     if (now.difference(_lastUpdate).inMilliseconds < 16) return;
     _lastUpdate = now;
 
-    if (_busy) return;
-    _busy = true;
+    // 천체 위치 업데이트
+    _updateMoonNode(_arkit!, now, _latDeg, _lonDeg);
+    _updateSunLight(_arkit!, now, _latDeg, _lonDeg);
 
-    _computeOverlay(_arkit!, _catalog!).whenComplete(() {
-      if (mounted) _busy = false;
-    });
+    // 화면 포커스 로직 (크기 조절)
+    _frameCount++;
+    if (_frameCount % 5 == 0) {
+      _checkLabelFocus(_arkit!);
+    }
   }
 
-  Future<void> _computeOverlay(ARKitController c, CatalogData catalog) async {
-    final camPos = await c.cameraPosition();
-    final camToWorld = await c.pointOfViewTransform();
-    if (!mounted || camPos == null || camToWorld == null) return;
+  Future<void> _checkLabelFocus(ARKitController c) async {
+    final size = MediaQuery.of(context).size;
+    final centerX = size.width / 2;
+    final centerY = size.height / 2;
 
-    final worldToCam = v.Matrix4.copy(camToWorld)..invert();
-    final nowUtc = DateTime.now().toUtc();
-    final screen = MediaQuery.sizeOf(context);
-    final center = Offset(screen.width / 2, screen.height / 2);
+    for (final node in _labelNodes) {
+      final screenPoint = await c.projectPoint(node.position);
 
-    Offset? mapAndScale(double px, double py) {
-      final p = _mapCameraPixelToScreen(px, py);
-      if (p == null) return null;
-      return center + (p - center) * _overlayScale;
-    }
+      if (screenPoint != null) {
+        final dist = math.sqrt(math.pow(screenPoint.x - centerX, 2) +
+            math.pow(screenPoint.y - centerY, 2));
 
-    bool isInFront(v.Vector3 wp) {
-      final cp4 = worldToCam.transform(v.Vector4(wp.x, wp.y, wp.z, 1));
-      return cp4.z < -0.1;
-    }
+        // 중앙 150px 이내면 보이고, 멀어지면 작아짐
+        double targetScale;
+        if (dist < 150) {
+          targetScale = 0.5; // 원래 크기
+        } else if (dist < 300) {
+          targetScale = 0.5 * (1.0 - ((dist - 150) / 150));
+        } else {
+          targetScale = 0.0;
+        }
 
-    // --- 1. [핵심 변경] 3D 달(Moon) 노드 제어 ---
-    // 매 프레임마다 달을 지웠다 그리는 건 비효율적이므로, 위치만 업데이트합니다.
-    _updateMoonNode(c, nowUtc, camPos);
-
-    // ----------------------------------------
-
-    // --- 2. 디버그 오버레이 ---
-    Map<String, Offset> cardinals = {};
-    List<Offset> horizon = [];
-    if (_showDebugOverlay) {
-      const dirs = {'N': 0.0, 'E': 90.0, 'S': 180.0, 'W': 270.0};
-      for (final e in dirs.entries) {
-        final wp = _altAzToWorldPoint(AltAz(0, e.value), camPos, _starDistance);
-        if (!isInFront(wp)) continue;
-        final pr = await c.projectPoint(wp);
-        if (pr == null) continue;
-        final pt = mapAndScale(pr.x, pr.y);
-        if (pt != null) cardinals[e.key] = pt;
+        if (targetScale < 0.01) targetScale = 0.0;
+        node.scale = v.Vector3(targetScale, targetScale, targetScale);
       }
     }
+  }
 
-    // --- 3. 별 계산 ---
-    final hipToPt = <int, Offset>{};
-    final stars = <StarDot>[];
+  // ====================================================
+  // [Labels] 별자리 이름 (정석 LookAt 행렬 방식)
+  // ====================================================
+  void _addLabels3D(ARKitController c, CatalogData catalog) {
+    final nowUtc = DateTime.now().toUtc();
+    _labelNodes.clear();
+
+    for (final code in catalog.linesByCode.keys) {
+      final name = catalog.namesByCode[code]?.displayName() ?? '';
+      if (name.isEmpty) continue;
+
+      // 대표 별 찾기
+      double minMag = 999.0;
+      int? alphaStarHip;
+      for (final poly in catalog.linesByCode[code]!) {
+        for (final hip in poly) {
+          final star = catalog.starsByHip[hip];
+          if (star != null && (star.mag ?? 99) < minMag) {
+            minMag = star.mag ?? 99;
+            alphaStarHip = hip;
+          }
+        }
+      }
+      if (alphaStarHip == null) continue;
+      final alphaStar = catalog.starsByHip[alphaStarHip];
+      if (alphaStar == null) continue;
+
+      // 위치 계산: 별보다 10m 앞 (140m)
+      final labelPos = _calculatePosition(
+          alphaStar.raDeg, alphaStar.decDeg, nowUtc, _labelDistance);
+      if (labelPos == null) continue;
+
+      // [핵심 수정] LookAt 행렬 계산
+      // 1. 내 위치(pos)에서 원점(0,0,0)을 바라보는 회전 각도를 구함
+      // 2. 단, '위쪽(Up)'은 반드시 하늘(0,1,0)을 향해야 함 (그래야 눕지 않음)
+      final euler = _calculateLookAtEuler(labelPos, v.Vector3(0, 0, 0));
+
+      final textGeo = ARKitText(
+        text: name,
+        extrusionDepth: 0.01,
+        materials: [
+          ARKitMaterial(
+            diffuse: ARKitMaterialProperty.color(Colors.white),
+            lightingModelName: ARKitLightingModel.constant,
+          )
+        ],
+      );
+
+      final node = ARKitNode(
+        geometry: textGeo,
+        position: labelPos,
+        scale: v.Vector3(0, 0, 0), // 초기엔 안 보임
+        eulerAngles: euler, // [수정] 행렬로 계산된 정확한 각도 적용
+        name: 'label_$code',
+      );
+
+      c.add(node);
+      _labelNodes.add(node);
+    }
+  }
+
+  // [신규 헬퍼 함수] LookAt 행렬을 만들고 Euler Angle로 변환
+  v.Vector3 _calculateLookAtEuler(v.Vector3 position, v.Vector3 target) {
+    // 1. Forward Vector (내가 바라보는 방향: 나 -> 타겟)
+    // ARKit 텍스트는 기본적으로 +Z를 앞면으로 함. 따라서 타겟 쪽이 +Z가 되도록 설정.
+    final forward = (target - position).normalized();
+
+    // 2. Up Vector (하늘 방향)
+    // 기본적으로 World Y(0,1,0)를 사용하지만, 만약 머리 위(Zenith)라서
+    // Forward와 Up이 평행하면 계산이 깨지므로 예외 처리
+    v.Vector3 up = v.Vector3(0, 1, 0);
+    if ((forward.dot(up)).abs() > 0.99) {
+      up = v.Vector3(0, 0, -1); // 임시 축 변경
+    }
+
+    // 3. Right Vector (오른쪽 방향 = Up x Forward)
+    final right = up.cross(forward).normalized();
+
+    // 4. Real Up Vector (진짜 위쪽 = Forward x Right)
+    // 이렇게 다시 계산해야 직각이 보장됨
+    final realUp = forward.cross(right).normalized();
+
+    // 5. 회전 행렬 생성 (Basis Vectors)
+    // ARKitNode의 로컬 좌표계: Right(X), RealUp(Y), Forward(Z)
+    final rotationMatrix = v.Matrix4(
+      right.x,
+      right.y,
+      right.z,
+      0,
+      realUp.x,
+      realUp.y,
+      realUp.z,
+      0,
+      forward.x,
+      forward.y,
+      forward.z,
+      0,
+      0,
+      0,
+      0,
+      1,
+    );
+
+    // 6. 행렬에서 Euler Angles (Pitch, Yaw, Roll) 추출
+    // Z-Y-X 순서 추출 (일반적인 3D 그래픽스 표준)
+    final r11 = rotationMatrix.entry(0, 0);
+    final r21 = rotationMatrix.entry(1, 0);
+    final r31 = rotationMatrix.entry(2, 0);
+    final r32 = rotationMatrix.entry(2, 1);
+    final r33 = rotationMatrix.entry(2, 2);
+
+    final pitch = math.atan2(r32, r33); // X축 회전
+    final yaw = math.atan2(-r31, math.sqrt(r32 * r32 + r33 * r33)); // Y축 회전
+    final roll = math.atan2(r21, r11); // Z축 회전
+
+    return v.Vector3(pitch, yaw, roll);
+  }
+
+  // ... (기존 _calculatePosition, _addStars3D 등 나머지 함수들은 동일) ...
+
+  v.Vector3? _calculatePosition(
+      double ra, double dec, DateTime utc, double distance) {
+    final altAz = raDecToAltAz(
+        raDeg: ra, decDeg: dec, latDeg: _latDeg, lonDeg: _lonDeg, utc: utc);
+    if (altAz.altDeg <= -5) return null;
+    final azRad = altAz.azDeg * math.pi / 180;
+    final altRad = altAz.altDeg * math.pi / 180;
+    final x = math.sin(azRad) * math.cos(altRad);
+    final y = math.sin(altRad);
+    final z = -math.cos(azRad) * math.cos(altRad);
+    return v.Vector3(x, y, z) * distance;
+  }
+
+  // 나머지 함수들 (_addStars3D, _addLines3D, _addHorizonGuide, _updateMoonNode, _updateSunLight 등)
+  // 기존 코드 그대로 유지해주세요.
+
+  void _addStars3D(ARKitController c, CatalogData catalog) {
+    final coreMaterial = ARKitMaterial(
+      diffuse: ARKitMaterialProperty.color(Colors.white),
+      lightingModelName: ARKitLightingModel.constant,
+    );
+    final haloMaterial = ARKitMaterial(
+      diffuse: ARKitMaterialProperty.color(Colors.white.withOpacity(0.15)),
+      lightingModelName: ARKitLightingModel.constant,
+    );
+    final nowUtc = DateTime.now().toUtc();
 
     for (final entry in catalog.starsByHip.entries) {
       final hip = entry.key;
       final star = entry.value;
       final mag = star.mag ?? 99;
+      bool isConstellationStar = _hipsInLines.contains(hip);
+      if (!isConstellationStar && mag > _maxMagForBackground) continue;
 
-      if (!_hipsInLines.contains(hip) && mag > _maxMagToDraw) continue;
+      final pos =
+          _calculatePosition(star.raDeg, star.decDeg, nowUtc, _starDistance);
+      if (pos == null) continue;
 
-      final altAz = raDecToAltAz(
-        raDeg: star.raDeg,
-        decDeg: star.decDeg,
-        latDeg: _latDeg,
-        lonDeg: _lonDeg,
-        utc: nowUtc,
+      double coreRadius;
+      if (mag < 0.0)
+        coreRadius = 0.5;
+      else if (mag < 1.5)
+        coreRadius = 0.35;
+      else if (mag < 3.0)
+        coreRadius = 0.2;
+      else
+        coreRadius = 0.08;
+
+      if (isConstellationStar && coreRadius < 0.12) coreRadius = 0.12;
+
+      final coreNode = ARKitNode(
+        geometry: ARKitSphere(radius: coreRadius, materials: [coreMaterial]),
+        position: pos,
       );
+      c.add(coreNode);
 
-      if (altAz.altDeg <= -5) continue;
-
-      final wp = _altAzToWorldPoint(
-          AltAz(altAz.altDeg, altAz.azDeg), camPos, _starDistance);
-      if (!isInFront(wp)) continue;
-
-      final pr = await c.projectPoint(wp);
-      if (pr == null) continue;
-
-      final pt = mapAndScale(pr.x, pr.y);
-      if (pt == null) continue;
-
-      hipToPt[hip] = pt;
-      stars.add(StarDot(p: pt, mag: mag));
-    }
-
-    // --- 4. 선 연결 ---
-    final segments = <({Offset a, Offset b})>[];
-    for (final entry in catalog.linesByCode.entries) {
-      for (final poly in entry.value) {
-        for (var i = 0; i < poly.length - 1; i++) {
-          final a = hipToPt[poly[i]];
-          final b = hipToPt[poly[i + 1]];
-          if (a != null && b != null) segments.add((a: a, b: b));
-        }
+      if (mag < 2.5) {
+        final haloNode = ARKitNode(
+          geometry:
+              ARKitSphere(radius: coreRadius * 4.0, materials: [haloMaterial]),
+          position: pos,
+        );
+        c.add(haloNode);
       }
-    }
-
-    // --- 5. 라벨 ---
-    final rawLabels = <({Offset p, String label})>[];
-    for (final code in catalog.linesByCode.keys) {
-      final name = catalog.namesByCode[code]?.displayName() ?? '';
-      if (name.isEmpty) continue;
-      int count = 0;
-      double sx = 0, sy = 0;
-      for (final poly in catalog.linesByCode[code]!) {
-        for (final hip in poly) {
-          final p = hipToPt[hip];
-          if (p == null) continue;
-          sx += p.dx;
-          sy += p.dy;
-          count++;
-        }
-      }
-      if (count >= 1)
-        rawLabels.add((p: Offset(sx / count, sy / count), label: name));
-    }
-
-    if (mounted) {
-      setState(() {
-        _stars = stars;
-        // _moon = moonDot; // [삭제됨]
-        _segments = segments;
-        _labels = rawLabels;
-        _cardinals = cardinals;
-        _horizon = horizon;
-      });
     }
   }
 
-  // === [신규] 달 노드 업데이트 함수 ===
-  void _updateMoonNode(ARKitController c, DateTime utc, v.Vector3 camPos) {
-    final moonRaDec = AstroMath.getMoonRaDec(utc);
-    final moonAltAz = raDecToAltAz(
-      raDeg: moonRaDec.ra,
-      decDeg: moonRaDec.dec,
-      latDeg: _latDeg,
-      lonDeg: _lonDeg,
-      utc: utc,
+  void _addLines3D(ARKitController c, CatalogData catalog) {
+    final nowUtc = DateTime.now().toUtc();
+    final lineMaterial = ARKitMaterial(
+      diffuse: ARKitMaterialProperty.color(Colors.white.withOpacity(0.2)),
+      lightingModelName: ARKitLightingModel.constant,
     );
 
-    // 지평선 아래면 숨김
-    if (moonAltAz.altDeg <= -5) {
+    for (final entry in catalog.linesByCode.entries) {
+      for (final poly in entry.value) {
+        for (var i = 0; i < poly.length - 1; i++) {
+          final hip1 = poly[i];
+          final hip2 = poly[i + 1];
+          final star1 = catalog.starsByHip[hip1];
+          final star2 = catalog.starsByHip[hip2];
+          if (star1 == null || star2 == null) continue;
+          final pos1 = _calculatePosition(
+              star1.raDeg, star1.decDeg, nowUtc, _starDistance);
+          final pos2 = _calculatePosition(
+              star2.raDeg, star2.decDeg, nowUtc, _starDistance);
+          if (pos1 == null || pos2 == null) continue;
+          final line = ARKitLine(
+              fromVector: pos1, toVector: pos2, materials: [lineMaterial]);
+          c.add(ARKitNode(geometry: line));
+        }
+      }
+    }
+  }
+
+  void _addHorizonGuide(ARKitController c) {
+    final ring = ARKitTorus(
+      ringRadius: _starDistance,
+      pipeRadius: 0.2,
+      materials: [
+        ARKitMaterial(
+          diffuse: ARKitMaterialProperty.color(
+              Colors.lightBlueAccent.withOpacity(0.3)),
+          lightingModelName: ARKitLightingModel.constant,
+        )
+      ],
+    );
+    _horizonNode = ARKitNode(
+      geometry: ring,
+      position: v.Vector3(0, 0, 0),
+      eulerAngles: v.Vector3(math.pi / 2, 0, 0),
+    );
+    c.add(_horizonNode!);
+  }
+
+  void _updateMoonNode(
+      ARKitController c, DateTime now, double lat, double lon) {
+    final moonRaDec = AstroMath.getMoonRaDec(now.toUtc());
+    final pos = _calculatePosition(
+        moonRaDec.ra, moonRaDec.dec, now.toUtc(), _moonDistance);
+    if (pos == null) {
       if (_moonNode != null) {
         c.remove(_moonNode!.name);
         _moonNode = null;
       }
       return;
     }
-
-    // 3D 위치 계산
-    final moonPos = _altAzToWorldPoint(moonAltAz, camPos, _moonDistance);
-
+    final moonPos = pos;
     if (_moonNode == null) {
-      // --- 노드 생성 ---
-      // 3D 모델: 구 (Sphere)
-      // 반지름: AR 거리감에 맞춰 조정 (대략 2.0~5.0 사이)
       final material = ARKitMaterial(
         diffuse: ARKitMaterialProperty.image('assets/images/moon_texture.jpg'),
-        // 빛 반사 설정 (너무 번들거리지 않게)
-        specular: ARKitMaterialProperty.color(Colors.grey),
-        shininess: 0.1,
+        lightingModelName: ARKitLightingModel.physicallyBased,
+        roughness: ARKitMaterialProperty.value(1.0),
+        metalness: ARKitMaterialProperty.value(0.0),
       );
-
-      final sphere = ARKitSphere(
-        radius: 4.0, // 달의 크기 (조절 가능)
-        materials: [material],
-      );
-
-      _moonNode = ARKitNode(
-        geometry: sphere,
-        position: moonPos,
-        name: 'moon_node',
-      );
-
+      final sphere = ARKitSphere(radius: 8.0, materials: [material]);
+      _moonNode =
+          ARKitNode(geometry: sphere, position: moonPos, name: 'moon_node');
       c.add(_moonNode!);
-
-      // [Tip] 달 위에 "Moon" 텍스트도 3D로 띄우고 싶다면?
-      // ARKitText를 자식 노드로 추가하면 됩니다. (일단은 생략)
     } else {
-      // --- 위치만 업데이트 (성능 최적화) ---
       _moonNode!.position = moonPos;
-
-      // [심화] 달의 자전축이나 기울기(Rotation)는 구현 복잡도가 높으므로
-      // 지금은 항상 카메라를 바라보게(LookAt) 하거나 고정해 둡니다.
-      // c.update(_moonNode!); // 필요한 경우 업데이트 호출
     }
   }
 
-  v.Vector3 _altAzToWorldPoint(AltAz aa, v.Vector3 camPos, double distance) {
-    final azRad = aa.azDeg * math.pi / 180;
-    final altRad = aa.altDeg * math.pi / 180;
-    final x = math.sin(azRad) * math.cos(altRad);
-    final y = math.sin(altRad);
-    final z = -math.cos(azRad) * math.cos(altRad);
-    return camPos + (v.Vector3(x, y, z) * distance);
-  }
+  void _updateSunLight(
+      ARKitController c, DateTime now, double lat, double lon) {
+    final sunRaDec = AstroMath.getSunRaDec(now.toUtc());
+    final sunPos = _calculatePosition(
+        sunRaDec.ra, sunRaDec.dec, now.toUtc(), _sunDistance);
+    if (sunPos == null) return;
 
-  Offset? _mapCameraPixelToScreen(double px, double py) {
-    final screen = MediaQuery.sizeOf(context);
-    final cam = _cameraImageSize;
-    if (cam == null || cam.width == 0 || cam.height == 0) return Offset(px, py);
-    return Offset(
-        px * (screen.width / cam.width), py * (screen.height / cam.height));
+    if (_lightNode == null) {
+      final light = ARKitLight(
+        type: ARKitLightType.omni,
+        intensity: 5000,
+        temperature: 6500,
+        color: Colors.white,
+      );
+      _lightNode = ARKitNode(light: light, position: sunPos, name: 'sun_light');
+      c.add(_lightNode!);
+    } else {
+      _lightNode!.position = sunPos;
+    }
   }
 
   @override
@@ -320,32 +485,20 @@ class _ArkitCameraViewScreenState extends State<ArkitCameraViewScreen> {
             onARKitViewCreated: _onARKitViewCreated,
             configuration: ARKitConfiguration.worldTracking,
             worldAlignment: ARWorldAlignment.gravityAndHeading,
+            autoenablesDefaultLighting: false,
           ),
-          Positioned.fill(
-            child: IgnorePointer(
-              child: RepaintBoundary(
-                child: CustomPaint(
-                  painter: ArkitSkyPainter(
-                    stars: _stars,
-                    // moon: _moon, // [삭제됨] Painter에는 더 이상 전달 안 함
-                    lineSegments: _segments,
-                    labels: _labels,
-                  ),
-                ),
-              ),
-            ),
-          ),
-          // ... (나머지 UI 코드는 동일)
-          if (_showDebugOverlay)
-            Positioned.fill(
-              child: IgnorePointer(
-                child: RepaintBoundary(
-                  child: CustomPaint(
-                    painter: ArkitDebugPainter(
-                      cardinals: _cardinals,
-                      horizon: _horizon,
-                    ),
-                  ),
+          if (_isStabilizing)
+            Container(
+              color: Colors.black54,
+              child: const Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    CircularProgressIndicator(color: Colors.white),
+                    SizedBox(height: 16),
+                    Text("나침반 보정 중...",
+                        style: TextStyle(color: Colors.white, fontSize: 16)),
+                  ],
                 ),
               ),
             ),
@@ -364,6 +517,22 @@ class _ArkitCameraViewScreenState extends State<ArkitCameraViewScreen> {
             ),
           ),
           Positioned(
+            top: 0,
+            right: 0,
+            child: SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.all(8.0),
+                child: IconButton(
+                  icon:
+                      const Icon(Icons.refresh, color: Colors.white, size: 28),
+                  onPressed: () {
+                    _reloadScreen();
+                  },
+                ),
+              ),
+            ),
+          ),
+          Positioned(
             top: 60,
             left: 20,
             child: IgnorePointer(
@@ -373,7 +542,7 @@ class _ArkitCameraViewScreenState extends State<ArkitCameraViewScreen> {
                 decoration: BoxDecoration(
                     color: Colors.black45,
                     borderRadius: BorderRadius.circular(8)),
-                child: const Text("AR Mode | N:북 E:동",
+                child: const Text("AR Mode | Corrected LookAt",
                     style: TextStyle(color: Colors.white70, fontSize: 12)),
               ),
             ),
