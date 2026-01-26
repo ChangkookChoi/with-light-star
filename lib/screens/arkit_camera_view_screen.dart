@@ -33,10 +33,17 @@ class _ArkitCameraViewScreenState extends State<ArkitCameraViewScreen> {
   final double _maxMagToDraw = 5.0;
   bool _showDebugOverlay = true;
 
-  static const double _R = 100.0;
+  // [중요] 3D 달 위치 설정
+  // 별보다 조금 더 가깝게 두어서(90m) 별들이 달 뒤로 숨는 효과를 줄 수도 있음
+  static const double _starDistance = 100.0;
+  static const double _moonDistance = 90.0;
+
   DateTime _lastUpdate = DateTime.fromMillisecondsSinceEpoch(0);
 
   List<StarDot> _stars = const [];
+  // MoonDot? _moon; // [삭제] 2D 달 변수 삭제
+  ARKitNode? _moonNode; // [추가] 3D 달 노드 관리용
+
   List<({Offset a, Offset b})> _segments = const [];
   List<({Offset p, String label})> _labels = const [];
   Map<String, Offset> _cardinals = const {};
@@ -44,7 +51,6 @@ class _ArkitCameraViewScreenState extends State<ArkitCameraViewScreen> {
 
   Set<int> _hipsInLines = {};
 
-  // 서울 기준 위치
   final double _latDeg = 37.5665;
   final double _lonDeg = 126.9780;
 
@@ -56,7 +62,6 @@ class _ArkitCameraViewScreenState extends State<ArkitCameraViewScreen> {
 
   @override
   void dispose() {
-    // 메모리 누수 방지를 위해 컨트롤러 정리
     _arkit?.dispose();
     super.dispose();
   }
@@ -81,22 +86,17 @@ class _ArkitCameraViewScreenState extends State<ArkitCameraViewScreen> {
 
   void _onARKitViewCreated(ARKitController controller) async {
     _arkit = controller;
-
     try {
       _cameraImageSize = await controller.getCameraImageResolution();
     } catch (_) {
       _cameraImageSize = null;
     }
-
     controller.updateAtTime = (_) => _tick();
   }
 
   void _tick() {
-    // [최적화] 화면이 살아있지 않거나, 로딩 중이면 연산 스킵
     if (!mounted || _loading || _catalog == null || _arkit == null) return;
-
     final now = DateTime.now();
-    // 16ms (60fps) 제한. 기기 성능에 따라 32ms(30fps)로 늘려도 됨.
     if (now.difference(_lastUpdate).inMilliseconds < 16) return;
     _lastUpdate = now;
 
@@ -129,13 +129,19 @@ class _ArkitCameraViewScreenState extends State<ArkitCameraViewScreen> {
       return cp4.z < -0.1;
     }
 
-    // --- 디버그용 방위 표시 ---
+    // --- 1. [핵심 변경] 3D 달(Moon) 노드 제어 ---
+    // 매 프레임마다 달을 지웠다 그리는 건 비효율적이므로, 위치만 업데이트합니다.
+    _updateMoonNode(c, nowUtc, camPos);
+
+    // ----------------------------------------
+
+    // --- 2. 디버그 오버레이 ---
     Map<String, Offset> cardinals = {};
     List<Offset> horizon = [];
     if (_showDebugOverlay) {
       const dirs = {'N': 0.0, 'E': 90.0, 'S': 180.0, 'W': 270.0};
       for (final e in dirs.entries) {
-        final wp = _altAzToWorldPoint(AltAz(0, e.value), camPos);
+        final wp = _altAzToWorldPoint(AltAz(0, e.value), camPos, _starDistance);
         if (!isInFront(wp)) continue;
         final pr = await c.projectPoint(wp);
         if (pr == null) continue;
@@ -144,11 +150,10 @@ class _ArkitCameraViewScreenState extends State<ArkitCameraViewScreen> {
       }
     }
 
-    // --- 별 계산 ---
+    // --- 3. 별 계산 ---
     final hipToPt = <int, Offset>{};
     final stars = <StarDot>[];
 
-    // [최적화] 반복문 내부 연산 최소화
     for (final entry in catalog.starsByHip.entries) {
       final hip = entry.key;
       final star = entry.value;
@@ -166,7 +171,8 @@ class _ArkitCameraViewScreenState extends State<ArkitCameraViewScreen> {
 
       if (altAz.altDeg <= -5) continue;
 
-      final wp = _altAzToWorldPoint(AltAz(altAz.altDeg, altAz.azDeg), camPos);
+      final wp = _altAzToWorldPoint(
+          AltAz(altAz.altDeg, altAz.azDeg), camPos, _starDistance);
       if (!isInFront(wp)) continue;
 
       final pr = await c.projectPoint(wp);
@@ -179,30 +185,25 @@ class _ArkitCameraViewScreenState extends State<ArkitCameraViewScreen> {
       stars.add(StarDot(p: pt, mag: mag));
     }
 
-    // --- 별자리 선 연결 ---
+    // --- 4. 선 연결 ---
     final segments = <({Offset a, Offset b})>[];
     for (final entry in catalog.linesByCode.entries) {
       for (final poly in entry.value) {
-        // [최적화] 선 연결 시 null 체크를 미리 수행하여 불필요한 리스트 추가 방지
         for (var i = 0; i < poly.length - 1; i++) {
           final a = hipToPt[poly[i]];
           final b = hipToPt[poly[i + 1]];
-          if (a != null && b != null) {
-            segments.add((a: a, b: b));
-          }
+          if (a != null && b != null) segments.add((a: a, b: b));
         }
       }
     }
 
-    // --- 라벨 계산 ---
+    // --- 5. 라벨 ---
     final rawLabels = <({Offset p, String label})>[];
     for (final code in catalog.linesByCode.keys) {
       final name = catalog.namesByCode[code]?.displayName() ?? '';
       if (name.isEmpty) continue;
-
       int count = 0;
       double sx = 0, sy = 0;
-
       for (final poly in catalog.linesByCode[code]!) {
         for (final hip in poly) {
           final p = hipToPt[hip];
@@ -212,15 +213,14 @@ class _ArkitCameraViewScreenState extends State<ArkitCameraViewScreen> {
           count++;
         }
       }
-
-      if (count >= 1) {
+      if (count >= 1)
         rawLabels.add((p: Offset(sx / count, sy / count), label: name));
-      }
     }
 
     if (mounted) {
       setState(() {
         _stars = stars;
+        // _moon = moonDot; // [삭제됨]
         _segments = segments;
         _labels = rawLabels;
         _cardinals = cardinals;
@@ -229,15 +229,72 @@ class _ArkitCameraViewScreenState extends State<ArkitCameraViewScreen> {
     }
   }
 
-  v.Vector3 _altAzToWorldPoint(AltAz aa, v.Vector3 camPos) {
+  // === [신규] 달 노드 업데이트 함수 ===
+  void _updateMoonNode(ARKitController c, DateTime utc, v.Vector3 camPos) {
+    final moonRaDec = AstroMath.getMoonRaDec(utc);
+    final moonAltAz = raDecToAltAz(
+      raDeg: moonRaDec.ra,
+      decDeg: moonRaDec.dec,
+      latDeg: _latDeg,
+      lonDeg: _lonDeg,
+      utc: utc,
+    );
+
+    // 지평선 아래면 숨김
+    if (moonAltAz.altDeg <= -5) {
+      if (_moonNode != null) {
+        c.remove(_moonNode!.name);
+        _moonNode = null;
+      }
+      return;
+    }
+
+    // 3D 위치 계산
+    final moonPos = _altAzToWorldPoint(moonAltAz, camPos, _moonDistance);
+
+    if (_moonNode == null) {
+      // --- 노드 생성 ---
+      // 3D 모델: 구 (Sphere)
+      // 반지름: AR 거리감에 맞춰 조정 (대략 2.0~5.0 사이)
+      final material = ARKitMaterial(
+        diffuse: ARKitMaterialProperty.image('assets/images/moon_texture.jpg'),
+        // 빛 반사 설정 (너무 번들거리지 않게)
+        specular: ARKitMaterialProperty.color(Colors.grey),
+        shininess: 0.1,
+      );
+
+      final sphere = ARKitSphere(
+        radius: 4.0, // 달의 크기 (조절 가능)
+        materials: [material],
+      );
+
+      _moonNode = ARKitNode(
+        geometry: sphere,
+        position: moonPos,
+        name: 'moon_node',
+      );
+
+      c.add(_moonNode!);
+
+      // [Tip] 달 위에 "Moon" 텍스트도 3D로 띄우고 싶다면?
+      // ARKitText를 자식 노드로 추가하면 됩니다. (일단은 생략)
+    } else {
+      // --- 위치만 업데이트 (성능 최적화) ---
+      _moonNode!.position = moonPos;
+
+      // [심화] 달의 자전축이나 기울기(Rotation)는 구현 복잡도가 높으므로
+      // 지금은 항상 카메라를 바라보게(LookAt) 하거나 고정해 둡니다.
+      // c.update(_moonNode!); // 필요한 경우 업데이트 호출
+    }
+  }
+
+  v.Vector3 _altAzToWorldPoint(AltAz aa, v.Vector3 camPos, double distance) {
     final azRad = aa.azDeg * math.pi / 180;
     final altRad = aa.altDeg * math.pi / 180;
-
     final x = math.sin(azRad) * math.cos(altRad);
     final y = math.sin(altRad);
     final z = -math.cos(azRad) * math.cos(altRad);
-
-    return camPos + (v.Vector3(x, y, z) * _R);
+    return camPos + (v.Vector3(x, y, z) * distance);
   }
 
   Offset? _mapCameraPixelToScreen(double px, double py) {
@@ -259,21 +316,18 @@ class _ArkitCameraViewScreenState extends State<ArkitCameraViewScreen> {
       backgroundColor: Colors.black,
       body: Stack(
         children: [
-          // 1. AR View
           ARKitSceneView(
             onARKitViewCreated: _onARKitViewCreated,
             configuration: ARKitConfiguration.worldTracking,
             worldAlignment: ARWorldAlignment.gravityAndHeading,
           ),
-
-          // 2. 별자리 오버레이 (RepaintBoundary로 최적화)
           Positioned.fill(
             child: IgnorePointer(
               child: RepaintBoundary(
-                // [최적화] 불필요한 전체 리페인팅 방지
                 child: CustomPaint(
                   painter: ArkitSkyPainter(
                     stars: _stars,
+                    // moon: _moon, // [삭제됨] Painter에는 더 이상 전달 안 함
                     lineSegments: _segments,
                     labels: _labels,
                   ),
@@ -281,8 +335,7 @@ class _ArkitCameraViewScreenState extends State<ArkitCameraViewScreen> {
               ),
             ),
           ),
-
-          // 3. 디버그 오버레이
+          // ... (나머지 UI 코드는 동일)
           if (_showDebugOverlay)
             Positioned.fill(
               child: IgnorePointer(
@@ -296,27 +349,20 @@ class _ArkitCameraViewScreenState extends State<ArkitCameraViewScreen> {
                 ),
               ),
             ),
-
-          // 4. [추가됨] 뒤로가기 버튼
           Positioned(
             top: 0,
             left: 0,
             child: SafeArea(
-              // 노치 영역 침범 방지
               child: Padding(
                 padding: const EdgeInsets.all(8.0),
                 child: IconButton(
                   icon: const Icon(Icons.arrow_back_ios_new,
                       color: Colors.white, size: 28),
-                  onPressed: () {
-                    Navigator.of(context).pop(); // 홈 화면으로 이동
-                  },
+                  onPressed: () => Navigator.of(context).pop(),
                 ),
               ),
             ),
           ),
-
-          // 5. 안내 텍스트 (위치 약간 조정)
           Positioned(
             top: 60,
             left: 20,
@@ -327,10 +373,8 @@ class _ArkitCameraViewScreenState extends State<ArkitCameraViewScreen> {
                 decoration: BoxDecoration(
                     color: Colors.black45,
                     borderRadius: BorderRadius.circular(8)),
-                child: const Text(
-                  "AR Mode | N:북 E:동",
-                  style: TextStyle(color: Colors.white70, fontSize: 12),
-                ),
+                child: const Text("AR Mode | N:북 E:동",
+                    style: TextStyle(color: Colors.white70, fontSize: 12)),
               ),
             ),
           ),

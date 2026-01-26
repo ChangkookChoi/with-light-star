@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'dart:ui' as ui; // PointMode 사용을 위해 필요
+import 'dart:ui' as ui;
 
 class StarDot {
   final Offset p;
@@ -7,17 +7,26 @@ class StarDot {
   const StarDot({required this.p, required this.mag});
 }
 
+class MoonDot {
+  final Offset p;
+  // 나중에 위상(Phase) 정보를 여기에 추가할 수 있습니다.
+  const MoonDot({required this.p});
+}
+
 class ArkitSkyPainter extends CustomPainter {
   final List<StarDot> stars;
+  final MoonDot? moon;
   final List<({Offset a, Offset b})> lineSegments;
   final List<({Offset p, String label})> labels;
 
-  // 페인트 객체를 매번 생성하지 않도록 미리 정의 (메모리 절약)
   final Paint _linePaint;
   final Paint _starPaint;
+  final Paint _moonPaint;
+  final TextStyle _labelStyle; // 텍스트 스타일 재사용
 
   ArkitSkyPainter({
     required this.stars,
+    this.moon,
     required this.lineSegments,
     required this.labels,
   })  : _linePaint = Paint()
@@ -25,16 +34,27 @@ class ArkitSkyPainter extends CustomPainter {
           ..strokeWidth = 1.0
           ..strokeCap = StrokeCap.round
           ..color = Colors.white.withOpacity(0.38),
-        _starPaint = Paint()..style = PaintingStyle.fill;
+        _starPaint = Paint()..style = PaintingStyle.fill,
+        // [수정] 달을 붉은색으로 변경
+        _moonPaint = Paint()
+          ..style = PaintingStyle.fill
+          ..color = Colors.redAccent,
+        // [수정] 텍스트 스타일 정의 (별자리와 동일)
+        _labelStyle = TextStyle(
+          color: Colors.white.withOpacity(0.9),
+          fontSize: 13,
+          fontWeight: FontWeight.w500,
+          shadows: const [
+            Shadow(blurRadius: 3, color: Colors.black, offset: Offset(1, 1))
+          ],
+        );
 
   @override
   void paint(Canvas canvas, Size size) {
-    // 1. [최적화] 선 그리기 (Batch Processing)
-    // 선을 하나씩(drawLine) 그리는 대신, 경로(Path) 하나에 담아서 한 번에 그립니다.
+    // 1. 선 그리기
     if (lineSegments.isNotEmpty) {
       final path = Path();
       for (final seg in lineSegments) {
-        // 화면 밖의 선은 Path에 추가하지 않음 (간단한 컬링)
         if (_isSegmentVisible(seg.a, seg.b, size)) {
           path.moveTo(seg.a.dx, seg.a.dy);
           path.lineTo(seg.b.dx, seg.b.dy);
@@ -43,10 +63,9 @@ class ArkitSkyPainter extends CustomPainter {
       canvas.drawPath(path, _linePaint);
     }
 
-    // 2. [최적화] 별 그리기
+    // 2. 별 그리기
     for (final s in stars) {
       final p = s.p;
-      // 화면 밖의 별은 그리지 않음
       if (p.dx < -20 ||
           p.dy < -20 ||
           p.dx > size.width + 20 ||
@@ -55,83 +74,82 @@ class ArkitSkyPainter extends CustomPainter {
       final r = _magToRadius(s.mag);
       final a = _magToAlpha(s.mag);
 
-      // [성능 핵심]
-      // 모든 별에 Glow(빛 번짐)를 주지 않고, 밝은 별(3등급 이하)에만 줍니다.
-      // 어두운 별은 계산과 그리기 횟수를 절반으로 줄입니다.
       if (s.mag < 3.0) {
         _starPaint.color = Colors.white.withOpacity((a * 0.35).clamp(0.0, 0.4));
         canvas.drawCircle(p, r * 2.5, _starPaint);
       }
-
-      // 별의 중심(Core)
       _starPaint.color = Colors.white.withOpacity(a);
       canvas.drawCircle(p, r, _starPaint);
     }
 
-    // 3. 라벨 그리기
-    final labelStyle = TextStyle(
-      color: Colors.white.withOpacity(0.9),
-      fontSize: 13,
-      fontWeight: FontWeight.w500,
-      shadows: const [
-        Shadow(blurRadius: 3, color: Colors.black, offset: Offset(1, 1))
-      ],
-    );
+    // 3. [수정] 달 그리기 (붉은 원 + 텍스트)
+    if (moon != null) {
+      final mp = moon!.p;
+      if (mp.dx > -40 &&
+          mp.dy > -40 &&
+          mp.dx < size.width + 40 &&
+          mp.dy < size.height + 40) {
+        // 달무리 (붉은 Glow)
+        _moonPaint.color = Colors.redAccent.withOpacity(0.3);
+        canvas.drawCircle(mp, 24.0, _moonPaint);
 
+        // 달 본체 (붉은색)
+        _moonPaint.color = Colors.redAccent;
+        canvas.drawCircle(mp, 10.0, _moonPaint);
+
+        // [추가] "달" 텍스트 표시
+        final tp = TextPainter(
+          text: TextSpan(text: "달", style: _labelStyle), // 별자리와 같은 크기/스타일
+          textDirection: TextDirection.ltr,
+        )..layout();
+        // 원 아래쪽에 텍스트 배치
+        tp.paint(canvas, mp + Offset(-tp.width / 2, 14));
+      }
+    }
+
+    // 4. 별자리 이름 그리기
     for (final l in labels) {
-      // 화면 안에 있는 라벨만 그림
       if (l.p.dx < 0 ||
           l.p.dy < 0 ||
           l.p.dx > size.width ||
           l.p.dy > size.height) continue;
-
       final tp = TextPainter(
-        text: TextSpan(text: l.label, style: labelStyle),
+        text: TextSpan(text: l.label, style: _labelStyle),
         textDirection: TextDirection.ltr,
         maxLines: 1,
-      );
-
-      tp.layout(); // maxWidth 제한 제거 (성능 향상 미비하지만 텍스트 잘림 방지)
-
-      // 텍스트 중심을 잡기 위해 오프셋 조정
+      )..layout();
       tp.paint(canvas, l.p + Offset(-tp.width / 2, 8));
     }
   }
 
-  // 선이 화면 안에 조금이라도 걸치는지 확인
   bool _isSegmentVisible(Offset a, Offset b, Size size) {
     final minX = -50.0;
     final minY = -50.0;
     final maxX = size.width + 50.0;
     final maxY = size.height + 50.0;
-
-    // 두 점이 모두 화면 왼쪽/오른쪽/위/아래에 있으면 안 보임
     if (a.dx < minX && b.dx < minX) return false;
     if (a.dx > maxX && b.dx > maxX) return false;
     if (a.dy < minY && b.dy < minY) return false;
     if (a.dy > maxY && b.dy > maxY) return false;
-
     return true;
   }
 
   double _magToRadius(double mag) {
     final clamped = mag.clamp(-1.0, 6.0);
-    // return 값 계산 단순화
-    return 3.0 - (clamped * 0.35); // 밝을수록 크기 (약 1.0 ~ 3.5 사이)
+    return 3.0 - (clamped * 0.35);
   }
 
   double _magToAlpha(double mag) {
-    // 밝기 계산 로직 단순화
-    if (mag > 5.0) return 0.3; // 아주 어두운 별은 고정 투명도
+    if (mag > 5.0) return 0.3;
     final clamped = mag.clamp(-1.0, 6.0);
     return (1.0 - (clamped + 1.0) / 7.0).clamp(0.2, 1.0);
   }
 
   @override
   bool shouldRepaint(covariant ArkitSkyPainter oldDelegate) {
-    // 데이터 내용이 바뀌었을 때만 다시 그림
     return oldDelegate.stars != stars ||
         oldDelegate.lineSegments != lineSegments ||
-        oldDelegate.labels != labels;
+        oldDelegate.labels != labels ||
+        oldDelegate.moon != moon;
   }
 }
