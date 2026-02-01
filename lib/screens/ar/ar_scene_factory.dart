@@ -6,6 +6,7 @@ import '../../data/catalog_models.dart';
 import 'ar_utils.dart';
 
 class ArSceneFactory {
+  // 거리 설정
   static const double starDistance = 450.0;
   static const double labelDistance = 450.0;
 
@@ -49,7 +50,7 @@ class ArSceneFactory {
     );
     nodes.add(horizonRing);
 
-    // 2. 방위표 (초기에는 단순 LookAt 적용)
+    // 2. 방위표 (N, E, S, W)
     final directions = {
       'N': v.Vector3(0, 0, -starDistance),
       'E': v.Vector3(starDistance, 0, 0),
@@ -58,8 +59,8 @@ class ArSceneFactory {
     };
 
     directions.forEach((text, pos) {
-      // [수정] 인자가 1개인 단순 계산 함수 호출
-      final rotation = ArUtils.calculateSimpleLookAt(pos);
+      // [삭제] 더 이상 수학 계산 필요 없음!
+      // final rotation = ArUtils.calculateSimpleLookAt(pos);
 
       final textGeo = ARKitText(
         text: text,
@@ -76,8 +77,12 @@ class ArSceneFactory {
         geometry: textGeo,
         position: pos,
         scale: v.Vector3.all(40.0),
-        eulerAngles: rotation,
-        name: 'dir_$text', // 나중에 움직이려면 이름 필요
+
+        // [핵심] 우리가 뚫어놓은 기능 사용!
+        isBillboard: true,
+
+        // [삭제] rotation 넣으면 충돌날 수 있으니 제거
+        // eulerAngles: rotation,
       ));
     });
 
@@ -199,8 +204,8 @@ class ArSceneFactory {
           allowBelowHorizon: true);
       if (labelPos == null) continue;
 
-      // [수정] 초기화 시에는 단순 함수 호출 (에러 해결)
-      final rotation = ArUtils.calculateSimpleLookAt(labelPos, name);
+      // [삭제] 수학 계산 안녕!
+      // final rotation = ArUtils.calculateSimpleLookAt(labelPos);
 
       final textGeo = ARKitText(
         text: name,
@@ -217,7 +222,10 @@ class ArSceneFactory {
         geometry: textGeo,
         position: labelPos,
         scale: v.Vector3.all(1.5),
-        eulerAngles: rotation,
+
+        // [핵심] 우리가 만든 그 기능!
+        isBillboard: true,
+
         name: 'label_$code',
       ));
     }

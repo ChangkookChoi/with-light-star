@@ -4,10 +4,9 @@ packages:
   arkit_plugin:
     dependency: "direct main"
     description:
-      name: arkit_plugin
-      sha256: db53cecb9caf18dfc789b63e67ed78506dfa26f95aa3646955007b51448575be
-      url: "https://pub.dev"
-    source: hosted
+      path: "packages/arkit_plugin"
+      relative: true
+    source: path
     version: "1.2.1"
   async:
     dependency: transitive
