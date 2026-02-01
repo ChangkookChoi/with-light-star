@@ -4,10 +4,8 @@ import 'package:flutter/material.dart';
 
 import '../data/catalog_loader.dart';
 import '../data/catalog_models.dart';
-
-// [중요] 새로 만든 파일들 import (경로가 안 맞으면 수정해주세요)
 import 'ar/ar_scene_factory.dart';
-import 'ar/ar_utils.dart'; // (혹시 모를 의존성 위해 추가)
+import 'ar/ar_utils.dart';
 
 class ArkitCameraViewScreen extends StatefulWidget {
   const ArkitCameraViewScreen({super.key});
@@ -57,12 +55,13 @@ class _ArkitCameraViewScreenState extends State<ArkitCameraViewScreen> {
         hips.addAll(poly);
       }
     }
-    if (mounted)
+    if (mounted) {
       setState(() {
         _catalog = data;
         _hipsInLines = hips;
         _loading = false;
       });
+    }
   }
 
   void _onARKitViewCreated(ARKitController controller) {
@@ -78,15 +77,20 @@ class _ArkitCameraViewScreenState extends State<ArkitCameraViewScreen> {
       _arkit!.add(ArSceneFactory.createAtmosphereNode());
     }
 
-    // 2. 별 추가
+    // [추가됨] 2. 지평선 및 방위표 추가
+    // 이 부분이 빠져있어서 지평선이 안 보였습니다.
+    final horizonNodes = ArSceneFactory.createHorizonNodes();
+    for (var node in horizonNodes) _arkit!.add(node);
+
+    // 3. 별 추가
     final starNodes = ArSceneFactory.createStarNodes(_catalog!, _hipsInLines);
     for (var node in starNodes) _arkit!.add(node);
 
-    // [중요] 3. 별자리 선 추가 (여기가 핵심)
+    // 4. 별자리 선 추가
     final lineNodes = ArSceneFactory.createLineNodes(_catalog!);
     for (var node in lineNodes) _arkit!.add(node);
 
-    // 4. 라벨 추가
+    // 5. 라벨 추가
     final labelNodes = ArSceneFactory.createLabelNodes(_catalog!);
     for (var node in labelNodes) _arkit!.add(node);
   }
@@ -136,10 +140,11 @@ class _ArkitCameraViewScreenState extends State<ArkitCameraViewScreen> {
 
   @override
   Widget build(BuildContext context) {
-    if (_loading)
+    if (_loading) {
       return const Scaffold(
           backgroundColor: Colors.black,
           body: Center(child: CircularProgressIndicator()));
+    }
 
     return Scaffold(
       backgroundColor: Colors.black,

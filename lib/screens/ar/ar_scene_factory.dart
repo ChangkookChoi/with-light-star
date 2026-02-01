@@ -7,8 +7,8 @@ import 'ar_utils.dart';
 
 class ArSceneFactory {
   // 거리 설정
-  static const double starDistance = 450.0;
-  static const double labelDistance = 450.0;
+  static const double starDistance = 700.0;
+  static const double labelDistance = 700.0;
 
   /// [가상 배경]
   static ARKitNode createAtmosphereNode() {
@@ -37,10 +37,10 @@ class ArSceneFactory {
     final horizonRing = ARKitNode(
       geometry: ARKitTorus(
         ringRadius: starDistance,
-        pipeRadius: 3.0,
+        pipeRadius: 1.0,
         materials: [
           ARKitMaterial(
-            diffuse: ARKitMaterialProperty.color(Colors.cyanAccent),
+            diffuse: ARKitMaterialProperty.color(Colors.blueGrey),
             lightingModelName: ARKitLightingModel.constant,
           )
         ],
@@ -59,15 +59,12 @@ class ArSceneFactory {
     };
 
     directions.forEach((text, pos) {
-      // [삭제] 더 이상 수학 계산 필요 없음!
-      // final rotation = ArUtils.calculateSimpleLookAt(pos);
-
       final textGeo = ARKitText(
         text: text,
         extrusionDepth: 2.0,
         materials: [
           ARKitMaterial(
-            diffuse: ARKitMaterialProperty.color(Colors.cyanAccent),
+            diffuse: ARKitMaterialProperty.color(Colors.blueGrey),
             lightingModelName: ARKitLightingModel.constant,
           )
         ],
@@ -76,13 +73,12 @@ class ArSceneFactory {
       nodes.add(ARKitNode(
         geometry: textGeo,
         position: pos,
-        scale: v.Vector3.all(40.0),
 
-        // [핵심] 우리가 뚫어놓은 기능 사용!
+        // [복구] 기존에 설정하신 크기 유지 (3.0)
+        scale: v.Vector3.all(3.0),
+
+        // [핵심] 방위표도 나를 쳐다보게 설정!
         isBillboard: true,
-
-        // [삭제] rotation 넣으면 충돌날 수 있으니 제거
-        // eulerAngles: rotation,
       ));
     });
 
@@ -199,17 +195,18 @@ class ArSceneFactory {
       final alphaStar = catalog.starsByHip[alphaStarHip];
       if (alphaStar == null) continue;
 
+      // [수정 완료] allowBelowHorizon: false로 설정하여 지평선 아래는 숨김
       final labelPos = ArUtils.calculatePosition(
           alphaStar.raDeg, alphaStar.decDeg, nowUtc, labelDistance,
-          allowBelowHorizon: true);
-      if (labelPos == null) continue;
+          allowBelowHorizon: false);
 
-      // [삭제] 수학 계산 안녕!
-      // final rotation = ArUtils.calculateSimpleLookAt(labelPos);
+      // null이면 (지평선 아래면) 그리지 않음
+      if (labelPos == null) continue;
 
       final textGeo = ARKitText(
         text: name,
         extrusionDepth: 0.01,
+        fontName: 'NanumGothicBold',
         materials: [
           ARKitMaterial(
             diffuse: ARKitMaterialProperty.color(Colors.white),
@@ -221,9 +218,11 @@ class ArSceneFactory {
       nodes.add(ARKitNode(
         geometry: textGeo,
         position: labelPos,
-        scale: v.Vector3.all(1.5),
 
-        // [핵심] 우리가 만든 그 기능!
+        // [복구] 기존에 설정하신 크기 유지 (25.0)
+        scale: v.Vector3.all(25.0),
+
+        // [핵심] 라벨도 나를 쳐다보게 설정!
         isBillboard: true,
 
         name: 'label_$code',

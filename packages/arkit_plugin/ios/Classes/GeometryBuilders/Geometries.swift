@@ -17,9 +17,28 @@ func createPlane(_ arguments: [String: Any]) -> SCNPlane {
     return plane
 }
 
+// [수정됨] 폰트(fontName)와 모서리 둥글기(chamferRadius) 기능 추가
 func createText(_ arguments: [String: Any]) -> SCNText {
     let extrusionDepth = arguments["extrusionDepth"] as! Double
-    return SCNText(string: arguments["text"], extrusionDepth: CGFloat(extrusionDepth))
+    let text = arguments["text"]
+    
+    // 기본 텍스트 생성
+    let scnText = SCNText(string: text, extrusionDepth: CGFloat(extrusionDepth))
+    
+    // 1. 모서리 둥글기 적용 (값이 있는 경우에만)
+    if let chamferRadius = arguments["chamferRadius"] as? Double {
+        scnText.chamferRadius = CGFloat(chamferRadius)
+    }
+    
+    // 2. 폰트 적용 (값이 있는 경우에만)
+    if let fontName = arguments["fontName"] as? String {
+        // 사이즈는 Node Scale로 조절하므로 기본 1.0으로 설정
+        if let font = UIFont(name: fontName, size: 1.0) {
+            scnText.font = font
+        }
+    }
+    
+    return scnText
 }
 
 func createBox(_ arguments: [String: Any]) -> SCNBox {
@@ -32,6 +51,7 @@ func createBox(_ arguments: [String: Any]) -> SCNBox {
 }
 
 func createLine(_ arguments: [String: Any]) -> SCNGeometry {
+    // 원본 라이브러리의 오타(deserizlieVector3)를 그대로 유지합니다.
     let fromVector = deserizlieVector3(arguments["fromVector"] as! [Double])
     let toVector = deserizlieVector3(arguments["toVector"] as! [Double])
     let source = SCNGeometrySource(vertices: [fromVector, toVector])
