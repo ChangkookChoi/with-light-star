@@ -62,6 +62,7 @@ class ArSceneFactory {
       final textGeo = ARKitText(
         text: text,
         extrusionDepth: 2.0,
+        fontName: 'NanumGothicBold',
         materials: [
           ARKitMaterial(
             diffuse: ARKitMaterialProperty.color(Colors.blueGrey),

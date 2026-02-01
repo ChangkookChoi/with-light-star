@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
-import 'camera_view_screen.dart';
-import 'real_horizon_screen.dart';
+// [중요] ArkitCameraViewScreen이 있는 경로를 정확히 import 해주세요.
+// 만약 lib/screens/ar/ 폴더 안에 있다면 경로를 맞춰주셔야 합니다.
 import 'arkit_camera_view_screen.dart';
 
 class MainObservationScreen extends StatefulWidget {
@@ -19,73 +19,56 @@ class _MainObservationScreenState extends State<MainObservationScreen> {
 
     return Scaffold(
       extendBody: true,
+      // 메인 AR 카메라 버튼 (중앙)
       floatingActionButtonLocation: FloatingActionButtonLocation.centerDocked,
       floatingActionButton: FloatingActionButton(
         elevation: 4.0,
         backgroundColor: Colors.amberAccent,
-        onPressed: () => _navigateToCamera(context),
+        // [수정] 버튼 누르면 바로 AR 별자리 화면으로 이동
+        onPressed: () => _navigateToARCamera(context),
         child: Icon(
           Icons.camera_enhance,
           color: const Color(0xFF0A0E21),
-          size: screenWidth * 0.075, // 화면 너비에 비례한 아이콘 크기
+          size: screenWidth * 0.075,
         ),
       ),
+      // 하단 네비게이션 바
       bottomNavigationBar: BottomAppBar(
         shape: const CircularNotchedRectangle(),
         notchMargin: 8.0,
         color: const Color(0xFF1B2735),
         child: Container(
-          height: screenHeight * 0.08, // 화면 높이의 8%
+          height: screenHeight * 0.08,
           padding: EdgeInsets.symmetric(horizontal: screenWidth * 0.05),
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              // 왼쪽 그룹: Home + Horizon Test
-              Row(
-                children: [
-                  IconButton(
-                    icon: Icon(
-                      Icons.home_filled,
-                      color: Colors.amberAccent,
-                      size: screenWidth * 0.07,
-                    ),
-                    onPressed: () {},
-                  ),
-                  IconButton(
-                    tooltip: '지평선 테스트',
-                    icon: Icon(
-                      Icons.hdr_strong, // 지평선 느낌 아이콘
-                      color: Colors.white70,
-                      size: screenWidth * 0.07,
-                    ),
-                    onPressed: () => _navigateToRealHorizon(context),
-                  ),
-                  IconButton(
-                    tooltip: 'ARKit Test',
-                    icon: Icon(
-                      Icons.architecture_sharp, // 지평선 느낌 아이콘
-                      color: Colors.white70,
-                      size: screenWidth * 0.07,
-                    ),
-                    onPressed: () => _navigateToARKit(context),
-                  ),
-                ],
+              // 왼쪽 그룹: Home
+              IconButton(
+                icon: Icon(
+                  Icons.home_filled,
+                  color: Colors.amberAccent,
+                  size: screenWidth * 0.07,
+                ),
+                onPressed: () {
+                  // 현재 홈 화면이므로 새로고침하거나 비워둠
+                },
               ),
 
-              // 오른쪽 그룹: Storybook(기존)
-              Row(
-                children: [
-                  IconButton(
-                    icon: Icon(
-                      Icons.auto_stories,
-                      color: Colors.white70,
-                      size: screenWidth * 0.07,
-                    ),
-                    onPressed: () {
-                      // AI 스토리 북 버튼 (의뢰서 요구사항 반영)
-                    },
-                  ),
-                ],
+              // 오른쪽 그룹: Storybook (추후 개발)
+              IconButton(
+                tooltip: '별자리 이야기',
+                icon: Icon(
+                  Icons.auto_stories,
+                  color: Colors.white70,
+                  size: screenWidth * 0.07,
+                ),
+                onPressed: () {
+                  // TODO: AI 스토리 북 기능 연결
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('별자리 이야기 기능 준비 중입니다! 📚')),
+                  );
+                },
               ),
             ],
           ),
@@ -115,31 +98,12 @@ class _MainObservationScreenState extends State<MainObservationScreen> {
     );
   }
 
-  void _navigateToCamera(BuildContext context) {
+  // ✅ [핵심] AR 카메라 화면으로 이동하는 함수
+  void _navigateToARCamera(BuildContext context) {
     Navigator.push(
       context,
       MaterialPageRoute(
-        // 카메라 화면으로 이동 (AR 관측 모드 진입)
-        builder: (context) => const CameraViewScreen(),
-      ),
-    );
-  }
-
-  // ✅ 추가: 지평선 테스트 화면으로 이동
-  void _navigateToRealHorizon(BuildContext context) {
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) => const RealHorizonScreen(),
-      ),
-    );
-  }
-
-  // ✅ 추가: AR 테스트 화면으로 이동
-  void _navigateToARKit(BuildContext context) {
-    Navigator.push(
-      context,
-      MaterialPageRoute(
+        // 우리가 만든 ARKit 화면으로 연결
         builder: (context) => const ArkitCameraViewScreen(),
       ),
     );
@@ -164,11 +128,12 @@ class _MainObservationScreenState extends State<MainObservationScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            "강원도 평창군",
+            "With Light Star", // 앱 이름으로 변경
             style: TextStyle(
-              fontSize: screenWidth * 0.075, // 화면 너비에 맞춘 폰트 크기
+              fontSize: screenWidth * 0.075,
               fontWeight: FontWeight.bold,
               letterSpacing: -1,
+              fontFamily: 'Pretendard-Bold', // 폰트 적용 (없으면 기본)
             ),
           ),
           const SizedBox(height: 12),
@@ -180,11 +145,11 @@ class _MainObservationScreenState extends State<MainObservationScreen> {
               border: Border.all(color: Colors.amberAccent.withOpacity(0.4)),
             ),
             child: Text(
-              "✨ 보틀 등급 2: 관측 최적기",
+              "✨ 오늘 관측하기 아주 좋아요!",
               style: TextStyle(
                 color: Colors.amberAccent,
-                fontSize: screenWidth * 0.032,
-                fontWeight: FontWeight.w500,
+                fontSize: screenWidth * 0.035,
+                fontWeight: FontWeight.w600,
               ),
             ),
           ),
@@ -258,7 +223,7 @@ class _MainObservationScreenState extends State<MainObservationScreen> {
           padding: EdgeInsets.symmetric(
               horizontal: screenWidth * 0.07, vertical: 16),
           child: Text(
-            "지금 이곳 추천 별자리 TOP 3",
+            "지금 추천하는 별자리",
             style: TextStyle(
               fontSize: screenWidth * 0.045,
               fontWeight: FontWeight.bold,
