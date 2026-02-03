@@ -26,12 +26,14 @@ dependencies:
   
   camera: ^0.11.0          # 실시간 별자리 관측(AR)을 위한 카메라 제어
   sensors_plus: ^6.1.1     # 자이로센서/가속도계를 활용한 별자리 추적
-  geolocator: ^12.0.0      # 현재 위치(GPS) 기준 별자리 좌표 계산
   permission_handler: ^11.3.1 # 카메라 및 위치 권한 요청 관리
   http: ^1.2.0             # GPT API 및 천문 데이터 API 통신용
   flutter_compass: ^0.8.0  # 나침반
   motion_sensors: ^0.1.0   # fused attitude (heading, pitch, roll)
   # arkit_plugin: ^1.2.1     # AR Kit (iOS)
+  geolocator: ^12.0.0      # 현재 위치(GPS) 기준 별자리 좌표 계산
+  geocoding: ^2.1.1        # 좌표 -> 주소 변환
+  intl: ^0.20.2            # 날짜 포맷
   arkit_plugin:
     path: ./packages/arkit_plugin
 
@@ -59,9 +61,11 @@ flutter:
   # To add assets to your application, add an assets section, like this:
   assets:
     - assets/data/constellation_lines.json
+    - assets/data/constellation_lines_bk.json
     - assets/data/constellation_names.json
     - assets/data/stars_min.json
     - assets/images/moon_texture.jpg
+    - assets/images/splash_image.png
   #   - images/a_dot_burr.jpeg
   #   - images/a_dot_ham.jpeg
 

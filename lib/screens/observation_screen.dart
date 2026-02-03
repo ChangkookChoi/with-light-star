@@ -1,6 +1,10 @@
+// lib/screens/observation_screen.dart
+
 import 'package:flutter/material.dart';
-// [중요] ArkitCameraViewScreen이 있는 경로를 정확히 import 해주세요.
-// 만약 lib/screens/ar/ 폴더 안에 있다면 경로를 맞춰주셔야 합니다.
+import 'package:geolocator/geolocator.dart';
+import 'package:geocoding/geocoding.dart';
+import 'package:intl/intl.dart';
+// [중요] ArkitCameraViewScreen 경로 확인
 import 'arkit_camera_view_screen.dart';
 
 class MainObservationScreen extends StatefulWidget {
@@ -11,277 +15,338 @@ class MainObservationScreen extends StatefulWidget {
 }
 
 class _MainObservationScreenState extends State<MainObservationScreen> {
+  String _currentAddress = '위치를 찾는 중...';
+  String _currentDate = '';
+
+  @override
+  void initState() {
+    super.initState();
+    _initDateTime();
+    _getCurrentPosition();
+  }
+
+  void _initDateTime() {
+    final now = DateTime.now();
+    _currentDate = DateFormat('M월 d일 (E)', 'ko_KR').format(now);
+  }
+
+  Future<void> _getCurrentPosition() async {
+    bool serviceEnabled;
+    LocationPermission permission;
+
+    serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    if (!serviceEnabled) {
+      if (mounted) setState(() => _currentAddress = '위치 서비스 꺼짐');
+      return;
+    }
+
+    permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+      if (permission == LocationPermission.denied) {
+        if (mounted) setState(() => _currentAddress = '위치 권한 거부됨');
+        return;
+      }
+    }
+
+    try {
+      Position position = await Geolocator.getCurrentPosition(
+          desiredAccuracy: LocationAccuracy.high);
+      _getAddressFromLatLng(position);
+    } catch (e) {
+      if (mounted) setState(() => _currentAddress = '위치 확인 실패');
+    }
+  }
+
+  Future<void> _getAddressFromLatLng(Position position) async {
+    try {
+      List<Placemark> placemarks =
+          await placemarkFromCoordinates(position.latitude, position.longitude);
+      Placemark place = placemarks[0];
+      print("========================================place $place");
+      if (mounted) {
+        setState(() {
+          _currentAddress =
+              "${place.locality} ${place.subLocality ?? place.thoroughfare ?? ''}";
+        });
+      }
+    } catch (e) {
+      if (mounted) setState(() => _currentAddress = '주소 변환 실패');
+    }
+  }
+
+  void _navigateToARCamera(BuildContext context) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (context) => const ArkitCameraViewScreen()),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    // 기기의 화면 크기 정보 가져오기
     final double screenWidth = MediaQuery.of(context).size.width;
     final double screenHeight = MediaQuery.of(context).size.height;
 
     return Scaffold(
-      extendBody: true,
-      // 메인 AR 카메라 버튼 (중앙)
-      floatingActionButtonLocation: FloatingActionButtonLocation.centerDocked,
-      floatingActionButton: FloatingActionButton(
-        elevation: 4.0,
-        backgroundColor: Colors.amberAccent,
-        // [수정] 버튼 누르면 바로 AR 별자리 화면으로 이동
-        onPressed: () => _navigateToARCamera(context),
-        child: Icon(
-          Icons.camera_enhance,
-          color: const Color(0xFF0A0E21),
-          size: screenWidth * 0.075,
-        ),
-      ),
-      // 하단 네비게이션 바
-      bottomNavigationBar: BottomAppBar(
-        shape: const CircularNotchedRectangle(),
-        notchMargin: 8.0,
-        color: const Color(0xFF1B2735),
-        child: Container(
-          height: screenHeight * 0.08,
-          padding: EdgeInsets.symmetric(horizontal: screenWidth * 0.05),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              // 왼쪽 그룹: Home
-              IconButton(
-                icon: Icon(
-                  Icons.home_filled,
-                  color: Colors.amberAccent,
-                  size: screenWidth * 0.07,
-                ),
-                onPressed: () {
-                  // 현재 홈 화면이므로 새로고침하거나 비워둠
-                },
-              ),
-
-              // 오른쪽 그룹: Storybook (추후 개발)
-              IconButton(
-                tooltip: '별자리 이야기',
-                icon: Icon(
-                  Icons.auto_stories,
-                  color: Colors.white70,
-                  size: screenWidth * 0.07,
-                ),
-                onPressed: () {
-                  // TODO: AI 스토리 북 기능 연결
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('별자리 이야기 기능 준비 중입니다! 📚')),
-                  );
-                },
-              ),
-            ],
+      backgroundColor: const Color(0xFF0A0E21),
+      // [수정] BottomAppBar 제거하고, 버튼을 플로팅 타입으로 변경
+      floatingActionButtonLocation: FloatingActionButtonLocation.centerFloat,
+      floatingActionButton: Container(
+        margin: const EdgeInsets.only(bottom: 20), // 하단에서 띄움
+        height: 65, // 버튼 높이
+        width: 200, // 버튼 너비 (넓게)
+        child: FloatingActionButton.extended(
+          elevation: 8.0,
+          backgroundColor: Colors.amberAccent,
+          onPressed: () => _navigateToARCamera(context),
+          // 아이콘과 텍스트를 함께 배치하여 직관적으로 변경
+          icon: const Icon(Icons.camera_enhance,
+              color: Color(0xFF0A0E21), size: 28),
+          label: const Text(
+            "AR 관측 시작",
+            style: TextStyle(
+              color: Color(0xFF0A0E21),
+              fontSize: 18,
+              fontWeight: FontWeight.bold,
+              letterSpacing: 1.2,
+            ),
           ),
         ),
       ),
-      body: Stack(
-        children: [
-          _buildBackground(),
-          SafeArea(
-            bottom: false,
-            child: SingleChildScrollView(
-              padding: EdgeInsets.only(bottom: screenHeight * 0.15),
+
+      body: Container(
+        width: double.infinity,
+        height: double.infinity,
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [
+              Color(0xFF050511),
+              Color(0xFF0A0E21),
+              Color(0xFF151530),
+            ],
+          ),
+        ),
+        child: SafeArea(
+          child: SingleChildScrollView(
+            physics: const BouncingScrollPhysics(),
+            child: Padding(
+              padding: EdgeInsets.symmetric(horizontal: screenWidth * 0.05),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  _buildHeader(screenWidth),
                   SizedBox(height: screenHeight * 0.02),
-                  _buildAstronomyGuide(screenWidth),
+
+                  // 1. 상단 정보
+                  _buildHeader(screenWidth),
+
                   SizedBox(height: screenHeight * 0.03),
-                  _buildBottomRecommendations(screenWidth, screenHeight),
+
+                  // 2. 가이드 배너
+                  _buildGuideBanner(screenWidth, screenHeight),
+
+                  SizedBox(height: screenHeight * 0.04),
+
+                  // 3. 추천 별자리 (타이틀)
+                  Text(
+                    "✨ 지금 추천하는 별자리",
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: screenWidth * 0.055,
+                      fontWeight: FontWeight.bold,
+                      letterSpacing: 1.0,
+                    ),
+                  ),
+                  SizedBox(height: screenHeight * 0.02),
+
+                  // 4. 추천 별자리 리스트 (카드 사이즈 확대)
+                  SizedBox(
+                    height: screenHeight * 0.28, // [수정] 높이 증가 (22% -> 28%)
+                    child: ListView(
+                      scrollDirection: Axis.horizontal,
+                      physics: const BouncingScrollPhysics(),
+                      children: [
+                        _buildStarCard(screenWidth, "오리온자리", "가시성 98%",
+                            "용맹한 사냥꾼", "⭐⭐⭐⭐⭐"),
+                        _buildStarCard(screenWidth, "큰개자리", "가시성 92%",
+                            "북쪽 하늘의 여왕", "⭐⭐⭐⭐"),
+                        _buildStarCard(screenWidth, "황소자리", "가시성 85%",
+                            "붉은 눈 알데바란", "⭐⭐⭐⭐"),
+                      ],
+                    ),
+                  ),
+
+                  // 하단 버튼에 가려지지 않게 여백 추가
+                  SizedBox(height: 120),
                 ],
               ),
             ),
           ),
-        ],
-      ),
-    );
-  }
-
-  // ✅ [핵심] AR 카메라 화면으로 이동하는 함수
-  void _navigateToARCamera(BuildContext context) {
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        // 우리가 만든 ARKit 화면으로 연결
-        builder: (context) => const ArkitCameraViewScreen(),
-      ),
-    );
-  }
-
-  Widget _buildBackground() {
-    return Container(
-      decoration: const BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: [Color(0xFF0A0E21), Color(0xFF1B2735)],
         ),
       ),
     );
   }
 
   Widget _buildHeader(double screenWidth) {
-    return Padding(
-      padding: EdgeInsets.all(screenWidth * 0.06),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            "With Light Star", // 앱 이름으로 변경
-            style: TextStyle(
-              fontSize: screenWidth * 0.075,
-              fontWeight: FontWeight.bold,
-              letterSpacing: -1,
-              fontFamily: 'Pretendard-Bold', // 폰트 적용 (없으면 기본)
-            ),
-          ),
-          const SizedBox(height: 12),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-            decoration: BoxDecoration(
-              color: Colors.amberAccent.withOpacity(0.1),
-              borderRadius: BorderRadius.circular(30),
-              border: Border.all(color: Colors.amberAccent.withOpacity(0.4)),
-            ),
-            child: Text(
-              "✨ 오늘 관측하기 아주 좋아요!",
-              style: TextStyle(
-                color: Colors.amberAccent,
-                fontSize: screenWidth * 0.035,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildAstronomyGuide(double screenWidth) {
-    return Padding(
-      padding: EdgeInsets.symmetric(horizontal: screenWidth * 0.05),
-      child: Container(
-        padding: EdgeInsets.all(screenWidth * 0.06),
-        decoration: BoxDecoration(
-          color: Colors.white.withOpacity(0.06),
-          borderRadius: BorderRadius.circular(28),
-          border: Border.all(color: Colors.white.withOpacity(0.05)),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(Icons.auto_awesome,
-                    color: Colors.amberAccent, size: screenWidth * 0.05),
-                const SizedBox(width: 8),
-                Text(
-                  "오늘 밤 관측 가이드",
-                  style: TextStyle(
-                    fontSize: screenWidth * 0.045,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 20),
-            _guideItem(screenWidth, Icons.wb_twilight, "일몰 후 1시간 뒤 관측 권장"),
-            _guideItem(
-                screenWidth, Icons.water_drop_outlined, "낮은 습도로 인한 선명한 시계"),
-            _guideItem(screenWidth, Icons.explore_outlined, "서쪽 하늘 목성 관측 가능"),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _guideItem(double screenWidth, IconData icon, String text) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 16),
-      child: Row(
-        children: [
-          Icon(icon, size: screenWidth * 0.05, color: Colors.white54),
-          const SizedBox(width: 12),
-          Text(
-            text,
-            style: TextStyle(
-              color: Colors.white70,
-              fontSize: screenWidth * 0.035,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildBottomRecommendations(double screenWidth, double screenHeight) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Padding(
-          padding: EdgeInsets.symmetric(
-              horizontal: screenWidth * 0.07, vertical: 16),
-          child: Text(
-            "지금 추천하는 별자리",
-            style: TextStyle(
-              fontSize: screenWidth * 0.045,
-              fontWeight: FontWeight.bold,
-            ),
+        Text(
+          _currentDate,
+          style: TextStyle(
+            fontSize: screenWidth * 0.035,
+            fontWeight: FontWeight.w500,
+            color: Colors.white70,
           ),
         ),
-        SizedBox(
-          height: screenHeight * 0.22,
-          child: ListView(
-            scrollDirection: Axis.horizontal,
-            padding: EdgeInsets.symmetric(horizontal: screenWidth * 0.05),
-            children: [
-              _buildStarCard(screenWidth, "오리온자리", "가시성 98%", "용맹한 사냥꾼"),
-              _buildStarCard(screenWidth, "카시오페아", "가시성 92%", "북쪽 하늘의 여왕"),
-              _buildStarCard(screenWidth, "큰곰자리", "가시성 85%", "길잡이 북두칠성"),
-            ],
-          ),
+        const SizedBox(height: 4),
+        Row(
+          children: [
+            Icon(Icons.location_on,
+                color: Colors.amberAccent, size: screenWidth * 0.05),
+            const SizedBox(width: 6),
+            Text(
+              _currentAddress,
+              style: TextStyle(
+                fontSize: screenWidth * 0.06,
+                fontWeight: FontWeight.bold,
+                color: Colors.white,
+              ),
+            ),
+          ],
         ),
       ],
     );
   }
 
-  Widget _buildStarCard(
-      double screenWidth, String title, String visibility, String desc) {
+  Widget _buildGuideBanner(double width, double height) {
     return Container(
-      width: screenWidth * 0.42,
-      margin: const EdgeInsets.only(right: 16),
-      padding: EdgeInsets.all(screenWidth * 0.05),
+      width: width,
+      padding: EdgeInsets.all(width * 0.05),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          colors: [Color(0xFF283593), Color(0xFF4527A0)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(24),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFF4527A0).withOpacity(0.4),
+            blurRadius: 15,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    const Text("🔭", style: TextStyle(fontSize: 20)),
+                    const SizedBox(width: 8),
+                    Text(
+                      "오늘 밤 관측 가이드",
+                      style: TextStyle(
+                        color: Colors.amberAccent,
+                        fontWeight: FontWeight.bold,
+                        fontSize: width * 0.04,
+                      ),
+                    ),
+                  ],
+                ),
+                SizedBox(height: height * 0.015),
+                Text(
+                  "오늘 달은 '상현달'입니다.\n남쪽 하늘에 오리온자리가\n가장 밝게 빛나고 있어요!",
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: width * 0.04,
+                    height: 1.4,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.1),
+              shape: BoxShape.circle,
+            ),
+            child: Icon(
+              Icons.nightlight_round,
+              color: Colors.white,
+              size: width * 0.1,
+            ),
+          )
+        ],
+      ),
+    );
+  }
+
+  Widget _buildStarCard(double screenWidth, String title, String visibility,
+      String desc, String rating) {
+    return Container(
+      width: screenWidth * 0.65, // [수정] 너비 대폭 확대 (38% -> 65%)
+      margin: const EdgeInsets.only(right: 20), // 간격도 조금 넓힘
+      padding: EdgeInsets.all(screenWidth * 0.06),
       decoration: BoxDecoration(
         color: Colors.white.withOpacity(0.08),
-        borderRadius: BorderRadius.circular(30),
+        borderRadius: BorderRadius.circular(24), // 모서리 둥글기 증가
         border: Border.all(color: Colors.white.withOpacity(0.1)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.2),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          )
+        ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            decoration: BoxDecoration(
+              color: Colors.amberAccent.withOpacity(0.2),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Text(
+              visibility,
+              style: TextStyle(
+                color: Colors.amberAccent,
+                fontSize: screenWidth * 0.03,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
           Text(
             title,
             style: TextStyle(
-              fontSize: screenWidth * 0.045,
+              color: Colors.white,
+              fontSize: screenWidth * 0.06, // 폰트 사이즈 키움
               fontWeight: FontWeight.bold,
             ),
           ),
-          const SizedBox(height: 6),
-          Text(
-            visibility,
-            style: TextStyle(
-              color: Colors.amberAccent,
-              fontSize: screenWidth * 0.03,
-            ),
-          ),
-          const Spacer(),
+          const SizedBox(height: 8),
           Text(
             desc,
             style: TextStyle(
-              color: Colors.white54,
-              fontSize: screenWidth * 0.03,
+              color: Colors.white70,
+              fontSize: screenWidth * 0.035, // 설명 폰트도 키움
             ),
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+          ),
+          const Spacer(),
+          Text(
+            rating,
+            style: TextStyle(fontSize: screenWidth * 0.035),
           ),
         ],
       ),
