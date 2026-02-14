@@ -32,7 +32,7 @@ class _SplashScreenState extends State<SplashScreen> {
     final double screenHeight = screenSize.height;
 
     return Scaffold(
-      backgroundColor: const Color(0xFF0A0E21),
+      backgroundColor: const Color(0xFF0A0E21), // 이미지가 없을 때 보일 배경색
       body: Stack(
         children: [
           // 1. 배경 이미지 (화면 꽉 채우기)
@@ -42,11 +42,21 @@ class _SplashScreenState extends State<SplashScreen> {
             child: Image.asset(
               'assets/images/splash_image.png',
               fit: BoxFit.cover,
+              // [디버깅용] 이미지를 못 찾으면 에러 아이콘을 띄움
+              errorBuilder: (context, error, stackTrace) {
+                print("❌ 스플래시 이미지 로드 실패: $error");
+                return Container(
+                  color: const Color(0xFF0A0E21), // 실패 시 우주색 배경 유지
+                  child: const Center(
+                    child: Icon(Icons.broken_image,
+                        color: Colors.white24, size: 50),
+                  ),
+                );
+              },
             ),
           ),
 
-          // 2. 가독성을 위한 반투명 오버레이 (선택 사항)
-          // 글씨가 잘 보이도록 배경을 살짝 어둡게 처리
+          // 2. 가독성을 위한 반투명 오버레이
           Container(
             width: double.infinity,
             height: double.infinity,
@@ -58,30 +68,49 @@ class _SplashScreenState extends State<SplashScreen> {
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                // 상단 여백 확보 (비율)
-                Spacer(flex: 3),
+                // // 상단 여백 확보
+                const Spacer(flex: 3),
 
-                // 타이틀과 로딩바 사이 간격 (화면 높이의 4%)
+                // // [복구됨] 앱 타이틀 (이게 빠져 있었습니다)
+                // Text(
+                //   "With Light Star",
+                //   style: TextStyle(
+                //     fontFamily: 'NanumGothic', // main.dart에 설정된 폰트
+                //     fontSize: screenWidth * 0.09, // 화면 너비의 9%
+                //     fontWeight: FontWeight.bold,
+                //     color: Colors.white,
+                //     letterSpacing: screenWidth * 0.005,
+                //     shadows: [
+                //       Shadow(
+                //         blurRadius: screenWidth * 0.03,
+                //         color: Colors.black.withOpacity(0.5),
+                //         offset: const Offset(2.0, 2.0),
+                //       ),
+                //     ],
+                //   ),
+                // ),
+
+                // 타이틀과 로딩바 사이 간격
                 SizedBox(height: screenHeight * 0.04),
 
                 // 로딩 인디케이터
                 SizedBox(
-                  width: screenWidth * 0.08, // 너비의 8% 크기
+                  width: screenWidth * 0.08,
                   height: screenWidth * 0.08,
                   child: CircularProgressIndicator(
                     color: Colors.amberAccent,
-                    strokeWidth: screenWidth * 0.01, // 두께도 비율로 (너비의 1%)
+                    strokeWidth: screenWidth * 0.01,
                   ),
                 ),
 
-                Spacer(flex: 2), // 하단 여백 비율 조절
+                const Spacer(flex: 2), // 하단 여백
               ],
             ),
           ),
 
           // 4. 하단 카피라이트 문구
           Positioned(
-            bottom: screenHeight * 0.05, // 하단에서 5% 떨어진 위치
+            bottom: screenHeight * 0.05,
             left: 0,
             right: 0,
             child: Text(
@@ -89,7 +118,7 @@ class _SplashScreenState extends State<SplashScreen> {
               textAlign: TextAlign.center,
               style: TextStyle(
                   color: Colors.white70,
-                  fontSize: screenWidth * 0.035, // 화면 너비의 3.5% 크기
+                  fontSize: screenWidth * 0.035,
                   fontWeight: FontWeight.w300,
                   letterSpacing: 1.2,
                   shadows: [

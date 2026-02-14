@@ -22,6 +22,18 @@ extension FlutterArkitView {
             logPluginError("node not found", toChannel: channel)
             return
         }
+        
+        // --- [수정됨] 투명도(Opacity) 직접 제어 추가 ---
+        if let opacity = arguments["opacity"] as? Double {
+            node.opacity = CGFloat(opacity)
+        }
+
+        // --- [수정됨] 숨김(Hidden) 직접 제어 추가 ---
+        if let isHidden = arguments["isHidden"] as? Bool {
+            node.isHidden = isHidden
+        }
+        // ------------------------------------------
+
         if let geometryArguments = arguments["geometry"] as? [String: Any],
            let geometry = createGeometry(geometryArguments, withDevice: sceneView.device)
         {

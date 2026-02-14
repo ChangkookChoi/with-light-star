@@ -1,9 +1,9 @@
 import 'dart:async';
 import 'package:arkit_plugin/arkit_plugin.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
+import 'package:vector_math/vector_math_64.dart' as v;
+import 'package:permission_handler/permission_handler.dart';
 
-// [중요] 사용자의 폴더 구조에 맞춘 Import 경로
 import '../../data/catalog_loader.dart';
 import '../../data/catalog_models.dart';
 import 'ar/ar_scene_factory.dart';
@@ -16,169 +16,68 @@ class ArkitCameraViewScreen extends StatefulWidget {
 }
 
 class _ArkitCameraViewScreenState extends State<ArkitCameraViewScreen> {
-  ARKitController? _arkit;
+  late ARKitController arkitController;
   CatalogData? _catalog;
+  bool _isLoading = true;
 
-  bool _loading = true;
-  bool _isStabilizing = true;
-  bool _isAtmosphereOn = true;
+  // [위치 캐시] 노드 제어용 (여기서는 위치 업데이트용이 아니라 목록 관리용으로 사용)
+  final Map<String, v.Vector3> _nodePositions = {};
 
-  Set<int> _hipsInLines = {};
+  // [상태 캐시] 중복 업데이트 방지
+  final Map<String, double> _cachedOpacity = {};
+  final Map<String, bool> _cachedHidden = {};
+
+  bool _showAtmosphere = true;
+  Timer? _interactionTimer;
 
   @override
   void initState() {
     super.initState();
-    _loadCatalog();
-
-    // 안정화 타이머 (1.5초)
-    Future.delayed(const Duration(milliseconds: 1500), () {
-      if (mounted) {
-        setState(() => _isStabilizing = false);
-        if (_arkit != null && _catalog != null) _init3DScene();
-      }
-    });
+    _loadData();
   }
 
   @override
   void dispose() {
-    _arkit?.dispose();
+    _interactionTimer?.cancel();
+    arkitController.dispose();
     super.dispose();
   }
 
-  Future<void> _loadCatalog() async {
-    setState(() => _loading = true);
-
+  Future<void> _loadData() async {
+    await [Permission.camera, Permission.location].request();
     try {
-      // CatalogLoader 호출
       final data = await CatalogLoader.loadOnce();
-
-      // 별 강조용 ID 추출
-      final hips = <int>{};
-      for (final lines in data.linesByCode.values) {
-        for (final poly in lines) {
-          hips.addAll(poly);
-        }
-      }
-
       if (mounted) {
         setState(() {
           _catalog = data;
-          _hipsInLines = hips;
-          _loading = false; // 로딩 해제
+          _isLoading = false;
         });
-
-        // 이미 AR 뷰가 만들어졌다면 씬 그리기
-        if (_arkit != null && !_isStabilizing) {
-          _init3DScene();
-        }
       }
     } catch (e) {
-      debugPrint("❌ AR Screen 로딩 에러: $e");
-      if (mounted) {
-        setState(() => _loading = false); // 에러나면 로딩 끄기
-        _showErrorDialog(e.toString());
-      }
+      debugPrint("데이터 로드 실패: $e");
     }
-  }
-
-  void _showErrorDialog(String msg) {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text("데이터 로딩 실패"),
-        content: Text(msg),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text("확인"),
-          )
-        ],
-      ),
-    );
-  }
-
-  void _onARKitViewCreated(ARKitController controller) {
-    _arkit = controller;
-    if (!_loading && !_isStabilizing && _catalog != null) {
-      _init3DScene();
-    }
-  }
-
-  void _init3DScene() {
-    if (_arkit == null || _catalog == null) return;
-
-    // 1. 가상 배경
-    if (_isAtmosphereOn) {
-      _arkit!.add(ArSceneFactory.createAtmosphereNode());
-    }
-
-    // 2. 지평선
-    final horizonNodes = ArSceneFactory.createHorizonNodes();
-    for (var node in horizonNodes) _arkit!.add(node);
-
-    // 3. 별
-    final starNodes = ArSceneFactory.createStarNodes(_catalog!, _hipsInLines);
-    for (var node in starNodes) _arkit!.add(node);
-
-    // 4. 별자리 선
-    final lineNodes = ArSceneFactory.createLineNodes(_catalog!);
-    for (var node in lineNodes) _arkit!.add(node);
-
-    // 5. 라벨
-    final labelNodes = ArSceneFactory.createLabelNodes(_catalog!);
-    for (var node in labelNodes) _arkit!.add(node);
-  }
-
-  void _toggleAtmosphere() {
-    if (_arkit == null) return;
-    setState(() => _isAtmosphereOn = !_isAtmosphereOn);
-
-    if (_isAtmosphereOn) {
-      _arkit!.add(ArSceneFactory.createAtmosphereNode());
-    } else {
-      _arkit!.remove('atmosphere_node');
-    }
-  }
-
-  void _reloadScreen() {
-    if (!mounted) return;
-    Navigator.pushReplacement(
-      context,
-      PageRouteBuilder(
-        pageBuilder: (context, a1, a2) => const ArkitCameraViewScreen(),
-        transitionDuration: Duration.zero,
-        reverseTransitionDuration: Duration.zero,
-      ),
-    );
   }
 
   @override
   Widget build(BuildContext context) {
-    if (_loading) {
+    if (_isLoading) {
       return const Scaffold(
         backgroundColor: Colors.black,
-        body: Center(child: CircularProgressIndicator(color: Colors.amber)),
+        body:
+            Center(child: CircularProgressIndicator(color: Colors.amberAccent)),
       );
     }
 
     return Scaffold(
-      backgroundColor: Colors.black,
       body: Stack(
         children: [
           ARKitSceneView(
-            onARKitViewCreated: _onARKitViewCreated,
-            configuration: ARKitConfiguration.worldTracking,
+            onARKitViewCreated: onARKitViewCreated,
             worldAlignment: ARWorldAlignment.gravityAndHeading,
-            autoenablesDefaultLighting: false,
+            configuration: ARKitConfiguration.worldTracking,
           ),
-          if (_isStabilizing)
-            Container(
-              color: Colors.black54,
-              child: const Center(
-                child:
-                    Text("위치 안정화 중...", style: TextStyle(color: Colors.white)),
-              ),
-            ),
+
+          // 뒤로가기 버튼
           Positioned(
             top: 50,
             left: 20,
@@ -187,25 +86,139 @@ class _ArkitCameraViewScreenState extends State<ArkitCameraViewScreen> {
               onPressed: () => Navigator.pop(context),
             ),
           ),
+
+          // 대기권 버튼
           Positioned(
             top: 50,
             right: 20,
-            child: Row(
-              children: [
-                IconButton(
-                  icon: Icon(_isAtmosphereOn ? Icons.blur_on : Icons.blur_off,
-                      color: Colors.white),
-                  onPressed: _toggleAtmosphere,
-                ),
-                IconButton(
-                  icon: const Icon(Icons.refresh, color: Colors.white),
-                  onPressed: _reloadScreen,
-                ),
-              ],
+            child: IconButton(
+              icon: Icon(
+                _showAtmosphere ? Icons.blur_on : Icons.blur_off,
+                color: _showAtmosphere ? Colors.amberAccent : Colors.white54,
+                size: 30,
+              ),
+              onPressed: _toggleAtmosphere,
+            ),
+          ),
+
+          // 중앙 조준점
+          Center(
+            child: Container(
+              width: 8,
+              height: 8,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                border: Border.all(
+                    color: Colors.white.withOpacity(0.7), width: 1.5),
+              ),
             ),
           ),
         ],
       ),
+    );
+  }
+
+  void _toggleAtmosphere() {
+    setState(() {
+      _showAtmosphere = !_showAtmosphere;
+    });
+    // 대기권 업데이트 (여기는 로직 유지)
+    arkitController.update('atmosphere', opacity: _showAtmosphere ? 0.3 : 0.0);
+  }
+
+  void onARKitViewCreated(ARKitController arkitController) async {
+    this.arkitController = arkitController;
+    await _init3DScene();
+    _startInteractionLoop();
+  }
+
+  Future<void> _init3DScene() async {
+    if (_catalog == null) return;
+
+    print("🌌 [AR] 노드 생성 및 배치 시작...");
+
+    final List<ARKitNode> nodesToAdd = [];
+
+    // 배경 및 지평선
+    nodesToAdd.add(ArSceneFactory.createAtmosphereNode());
+    nodesToAdd.addAll(ArSceneFactory.createHorizonNodes());
+
+    // 별 데이터 추출
+    final hipsInLines = <int>{};
+    for (final polyList in _catalog!.linesByCode.values) {
+      for (final poly in polyList) hipsInLines.addAll(poly);
+    }
+
+    // 천체 노드 생성 (별, 선, 라벨, 달)
+    nodesToAdd.addAll(ArSceneFactory.createStarNodes(_catalog!, hipsInLines));
+    nodesToAdd.addAll(ArSceneFactory.createLineNodes(_catalog!));
+    nodesToAdd.addAll(ArSceneFactory.createLabelNodes(_catalog!));
+
+    final moonNode = ArSceneFactory.createMoonNode();
+    if (moonNode != null) nodesToAdd.add(moonNode);
+
+    // 노드 등록
+    for (final node in nodesToAdd) {
+      await arkitController.add(node);
+
+      // 관리 대상 등록
+      if (node.name != null) {
+        _nodePositions[node.name!] = node.position;
+        // 초기 상태: 보임(false), 불투명(1.0)
+        _cachedOpacity[node.name!] = 1.0;
+        _cachedHidden[node.name!] = false;
+      }
+    }
+    print("✅ [AR] 모든 노드 배치 완료.");
+  }
+
+  void _startInteractionLoop() {
+    _interactionTimer =
+        Timer.periodic(const Duration(milliseconds: 100), (timer) async {
+      if (!mounted) return;
+
+      // 카메라 정보 가져오기는 유지 (추후 필요할 수 있으므로 구조는 남겨둠)
+      final cameraPose = await arkitController.cameraProjectionMatrix();
+      if (cameraPose == null) return;
+
+      // 모든 노드에 대해 상태 업데이트 수행
+      _nodePositions.forEach((name, position) {
+        _updateNodeState(name);
+      });
+    });
+  }
+
+  // [수정됨] 조건 로직 제거 -> 항상 보이고 선명하게 유지
+  void _updateNodeState(String name) {
+    // 1. 대기권이나 방위표는 건드리지 않음
+    if (name == 'atmosphere' || name.startsWith('direction_')) return;
+
+    // 2. [변경 사항] 모든 별, 선, 라벨, 달에 대해 "항상 보임", "투명도 1.0" 강제 설정
+    // 지평선 아래 필터링 제거됨
+    // 다이내믹 포커스 제거됨
+
+    bool shouldShow = true; // 무조건 보임
+    double targetOpacity = 1.0; // 무조건 선명함
+
+    // 3. 최적화 (값이 변하지 않았으면 업데이트 안 함 - 브릿지 부하 방지)
+    double currentOpacity = _cachedOpacity[name] ?? 1.0;
+    bool currentHidden = _cachedHidden[name] ?? false;
+
+    // shouldShow가 true이면 hidden은 false여야 함.
+    bool isHiddenChanged = (currentHidden == shouldShow);
+    bool isOpacityChanged = (currentOpacity - targetOpacity).abs() > 0.05;
+
+    if (!isHiddenChanged && !isOpacityChanged) return;
+
+    // 캐시 업데이트
+    _cachedHidden[name] = !shouldShow;
+    _cachedOpacity[name] = targetOpacity;
+
+    // 네이티브 업데이트 요청
+    arkitController.update(
+      name,
+      isHidden: !shouldShow, // false (보임)
+      opacity: targetOpacity, // 1.0 (선명)
     );
   }
 }

@@ -68,98 +68,25 @@ class ARKitSceneView extends StatefulWidget {
     this.debug = false,
   });
 
-  /// This function will be fired when ARKit view is created.
   final ARKitPluginCreatedCallback onARKitViewCreated;
-
-  /// The configuration to use.
-  /// Defaults to World Tracking.
   final ARKitConfiguration configuration;
-
-  /// Determines whether the receiver should display statistics info like FPS.
-  /// When set to true, statistics are displayed in a overlay on top of the rendered scene.
-  /// Defaults to false.
   final bool showStatistics;
-
-  /// Specifies whether the receiver should automatically light up scenes that have no light source.
-  /// When enabled, a diffuse light is automatically added and placed while rendering scenes that have no light or only ambient lights.
-  /// The default is true.
   final bool autoenablesDefaultLighting;
-
-  /// Determines whether the receiver should recognize taps.
-  /// The default is false.
   final bool enableTapRecognizer;
-
-  /// Determines whether the receiver should recognize pinch events.
-  /// The default is false.
   final bool enablePinchRecognizer;
-
-  /// Determines whether the receiver should recognize pan events.
-  /// The default is false.
   final bool enablePanRecognizer;
-
-  /// Determines whether the receiver should recognize rotation events.
-  /// The default is false.
   final bool enableRotationRecognizer;
-
-  /// Type of planes to detect in the scene.
-  /// If set, new planes will continue to be detected and updated over time.
-  /// Detected planes will be added to the session as ARPlaneAnchor objects.
-  /// In the event that two planes are merged, the newer plane will be removed.
-  /// Defaults to ARPlaneDetection.none.
   final ARPlaneDetection planeDetection;
-
-  /// Determines how the coordinate system should be aligned with the world.
-  /// The default is ARWorldAlignment.gravity.
   final ARWorldAlignment worldAlignment;
-
-  /// Show detected 3D feature points in the world.
-  /// The default is false.
   final bool showFeaturePoints;
-
-  /// Show the world origin in the scene.
-  /// The default is false.
   final bool showWorldOrigin;
-
-  /// The mode of environment texturing to run.
-  /// If set, texture information will be accumulated and updated. Adding an AREnvironmentProbeAnchor to the session
-  /// will get the current environment texture available from that probe's perspective which can be used for lighting
-  /// virtual objects in the scene.
-  /// Defaults to ARWorldTrackingConfigurationEnvironmentTexturing.none.
-  /// Requires iOS 12 or newer
   final ARWorldTrackingConfigurationEnvironmentTexturing environmentTexturing;
-
-  /// Images to detect in the scene.
-  /// If set the session will attempt to detect the specified images.
-  /// When an image is detected an ARImageAnchor will be added to the session.
   final String? detectionImagesGroupName;
-
-  /// Images to detect in the scene.
-  /// If set the session will attempt to detect the specified images (bundle name or url)
-  /// When an image is detected an ARImageAnchor will be added to the session.
   final List<ARKitReferenceImage>? detectionImages;
-
-  /// Images to detect in the scene.
-  /// If set the session will attempt to detect the specified images.
-  /// When an image is detected an ARImageAnchor will be added to the session.
   final String? trackingImagesGroupName;
-
-  /// Images to detect in the scene.
-  /// If set the session will attempt to detect the specified images.
-  /// When an image is detected an ARImageAnchor will be added to the session.
   final List<ARKitReferenceImage>? trackingImages;
-
-  /// When set every user tap will be processed like user tapped on the center of the screen.
-  /// The default is false.
   final bool forceUserTapOnCenter;
-
-  /// Maximum number of images to track simultaneously.
-  /// Setting the maximum number of tracked images will limit the number of images that can be tracked in a given frame.
-  /// If more than the maximum is visible, only the images already being tracked will continue to track until tracking is lost or another image is removed.
-  /// The default is 0
   final int maximumNumberOfTrackedImages;
-
-  /// When true prints all communication between the plugin and the framework.
-  /// The default is false;
   final bool debug;
 
   @override
@@ -216,9 +143,6 @@ class _ARKitSceneViewState extends State<ARKitSceneView> {
 }
 
 /// Controls an [ARKitSceneView].
-///
-/// An [ARKitController] instance can be obtained by setting the [ARKitSceneView.onARKitViewCreated]
-/// callback for an [ARKitSceneView] widget.
 class ARKitController {
   ARKitController._init(
     int id,
@@ -268,54 +192,22 @@ class ARKitController {
   }
 
   late MethodChannel _channel;
-
-  /// This is called when a session fails.
-  /// On failure the session will be paused.
   StringResultHandler? onError;
-
-  /// This is called when a session is interrupted.
-  /// A session will be interrupted and no longer able to track when
-  /// it fails to receive required sensor data. This happens when video capture is interrupted,
-  /// for example when the application is sent to the background or when there are
-  /// multiple foreground applications (see AVCaptureSessionInterruptionReason).
-  /// No additional frame updates will be delivered until the interruption has ended.
   VoidCallback? onSessionWasInterrupted;
-
-  /// This is called when a session interruption has ended.
-  /// A session will continue running from the last known state once
-  /// the interruption has ended. If the device has moved, anchors will be misaligned.
   VoidCallback? onSessionInterruptionEnded;
-
   ARKitTapResultHandler? onNodeTap;
   ARKitHitResultHandler? onARTap;
   ARKitPinchGestureHandler? onNodePinch;
   ARKitPanResultHandler? onNodePan;
   ARKitRotationResultHandler? onNodeRotation;
-
-  /// Called when a new node has been mapped to the given anchor.
   AnchorEventHandler? onAddNodeForAnchor;
-
-  /// Called when a node will be updated with data from the given anchor.
   AnchorEventHandler? onUpdateNodeForAnchor;
-
-  /// Called when a mapped node has been removed from the scene graph for the given anchor.
   AnchorEventHandler? onDidRemoveNodeForAnchor;
-
-  /// Called once per frame
   Function(double time)? updateAtTime;
-
-  /// Called when camera tracking state is changed;
   Function(ARTrackingState trackingState, ARTrackingStateReason? reason)?
       onCameraDidChangeTrackingState;
-
-  /// This is called when the view deactivates, either manually or automatically
-  /// Set this function to do any custom actions your app requires to begin
-  /// the AR experience.
-  /// For example, when coaching is deactivated, your app might restore custom UI.
   VoidCallback? coachingOverlayViewDidDeactivate;
-
   final ARKitPluginCreatedCallback onARKitViewCreated;
-
   final bool debug;
   bool _wasDisposed = false;
 
@@ -343,10 +235,13 @@ class ARKitController {
     return _channel.invokeMethod('addARKitNode', params);
   }
 
+  // --- [수정됨] update 메서드 파라미터 추가 ---
   Future<void> update(
     String nodeName, {
     ARKitNode? node,
     List<ARKitMaterial>? materials,
+    double? opacity, // 추가됨
+    bool? isHidden, // 추가됨
   }) {
     final params = <String, dynamic>{'nodeName': nodeName};
     if (node != null) {
@@ -355,8 +250,18 @@ class ARKitController {
     if (materials != null) {
       params['materials'] = materials.map((e) => e.toJson()).toList();
     }
+
+    // 추가된 파라미터 매핑
+    if (opacity != null) {
+      params['opacity'] = opacity;
+    }
+    if (isHidden != null) {
+      params['isHidden'] = isHidden;
+    }
+
     return _channel.invokeMethod('onUpdateNode', params);
   }
+  // ----------------------------------------
 
   Future<void> remove(String nodeName) {
     return _channel.invokeMethod('removeARKitNode', {'nodeName': nodeName});
@@ -367,9 +272,6 @@ class ARKitController {
         'removeARKitAnchor', {'anchorIdentifier': anchorIdentifier});
   }
 
-  /// Perform Hit Test
-  /// defaults to center of the screen.
-  /// x and y values are between 0 and 1
   Future<List<ARKitTestResult>> performHitTest(
       {required double x, required double y}) async {
     assert(x > 0 && y > 0);
@@ -384,7 +286,6 @@ class ARKitController {
     }
   }
 
-  /// Return list of 2 Vector3 elements, where first element - min value, last element - max value.
   Future<List<Vector3>> getNodeBoundingBox(ARKitNode node) async {
     final params = _addParentNodeNameToParams(node.toMap(), null);
     final result =
@@ -402,7 +303,6 @@ class ARKitController {
         : null;
   }
 
-  /// Updates the geometry with the vertices of a face geometry.
   void updateFaceGeometry(ARKitNode node, String fromAnchorId) {
     _channel.invokeMethod<void>(
         'updateFaceGeometry',
@@ -426,7 +326,6 @@ class ARKitController {
         : null;
   }
 
-  /// Provides the point of view transform in world space (relative to the scene's root node)
   Future<Matrix4?> pointOfViewTransform() async {
     final pointOfViewTransform =
         await _channel.invokeListMethod<double>('pointOfViewTransform');
@@ -454,9 +353,6 @@ class ARKitController {
     });
   }
 
-  /// A view that displays standardized onboarding instructions to direct users toward a specific goal.
-  /// The view will use context aware messaging and animations to instruct the user on gathering required info for the AR session.
-  /// Requires iOS 13 and above.
   Future<void> addCoachingOverlay(CoachingOverlayGoal goal) =>
       _channel.invokeMethod('addCoachingOverlay', {
         'goal': goal.index,

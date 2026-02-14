@@ -46,6 +46,7 @@ dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^3.0.0    # 코드 품질 관리용
+  flutter_launcher_icons: ^0.13.1 # 앱 아이콘
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
@@ -94,3 +95,9 @@ flutter:
   #
   # For details regarding fonts from package dependencies,
   # see https://flutter.dev/custom-fonts/#from-packages
+
+flutter_launcher_icons:
+  ios: true                # iOS 아이콘 생성 활성화
+  android: false           # 지금은 iOS만 테스트 중이니 false로 둡니다
+  image_path: "assets/app_icon.png"
+  remove_alpha_ios: true   # iOS는 투명 배경을 허용하지 않으므로 자동으로 처리

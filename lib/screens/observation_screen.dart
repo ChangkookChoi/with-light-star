@@ -63,7 +63,7 @@ class _MainObservationScreenState extends State<MainObservationScreen> {
       List<Placemark> placemarks =
           await placemarkFromCoordinates(position.latitude, position.longitude);
       Placemark place = placemarks[0];
-      print("========================================place $place");
+
       if (mounted) {
         setState(() {
           _currentAddress =
