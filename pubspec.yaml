@@ -67,6 +67,7 @@ flutter:
     - assets/data/stars_min.json
     - assets/images/moon_texture.jpg
     - assets/images/splash_image.png
+    - assets/images/star_glow.png
   #   - images/a_dot_burr.jpeg
   #   - images/a_dot_ham.jpeg
 

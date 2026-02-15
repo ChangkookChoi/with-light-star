@@ -82,3 +82,11 @@ assets/
 - `assets/data/stars_min.json`
 - `assets/images/moon_texture.jpg`
 - `assets/images/splash_image.png`
+
+
+## Data 출처
+```
+아래 링크의 데이터를 원본으로 파싱하여 사용
+```
+- constellation_lines.json : https://github.com/Stellarium/stellarium-skycultures/blob/master/western/index.json
+- star_min.json : https://github.com/astronexus/HYG-Database/blob/main/hyg/v3/hyg_v38.csv.gz
